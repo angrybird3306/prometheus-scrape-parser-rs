@@ -2,6 +2,15 @@
 name = "prometheus-scrape-parser-rs"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "A parser for the two Prometheus exposition formats — classic text and delimited protobuf — ported from Go's expfmt"
+license = "Apache-2.0"
+repository = "https://github.com/angrybird3306/prometheus-scrape-parser-rs"
+readme = "README.md"
+keywords = ["prometheus", "metrics", "parser", "monitoring", "observability"]
+categories = ["parser-implementations", "development-tools", "network-programming"]
+authors = ["angrybird3306"]
+exclude = ["examples"]
 
 [dependencies]
 buffa = "0.9.2"
