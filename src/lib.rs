@@ -12,6 +12,7 @@ mod model;
 mod parse_proto;
 mod parse_text;
 mod parser;
+pub mod proto;
 mod search;
 
 pub use crate::error::{Disposition, Error, ErrorKind};

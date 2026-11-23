@@ -3,9 +3,9 @@
 
 use std::borrow::Cow;
 
+use crate::proto::io::prometheus::client as dto;
+use crate::proto::io::prometheus::client::MetricType as ProtoType;
 use buffa::MessageView;
-use prometheus_prometheus_anthropics_buffa::io::prometheus::client as dto;
-use prometheus_prometheus_anthropics_buffa::io::prometheus::client::MetricType as ProtoType;
 
 use crate::Stats;
 use crate::error::{Error, ErrorKind};

@@ -5,7 +5,7 @@
 mod common;
 
 use buffa::{Message, MessageField, UnknownFields};
-use prometheus_prometheus_anthropics_buffa::io::prometheus::client as dto;
+use prometheus_scrape_parser_rs::proto::io::prometheus::client as dto;
 use prometheus_scrape_parser_rs::{
     Bucket, ErrorKind, HistogramValue, IntOrFloat, LabelView, MetricFamily, MetricFamilyView,
     MetricType, MetricValue, MetricView, ProtoBufParser, ProtoFamily, Quantile, Stats,

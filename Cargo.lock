@@ -3,18 +3,11 @@
 version = 4
 
 [[package]]
-name = "base64"
-version = "0.22.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
-
-[[package]]
 name = "buffa"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a92f2f5df67a9d5ccfc65237bfc954c56328aee40a04a9b92381ecba370be246"
 dependencies = [
- "base64",
  "bytes",
  "foldhash",
  "hashbrown",
@@ -24,18 +17,6 @@ dependencies = [
  "serde_json",
  "smoothutf8",
  "thiserror",
-]
-
-[[package]]
-name = "buffa-descriptor"
-version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b7dd79a6898e70dac8adae959c8ad2cae51ed96397935c91c996280cedcb55e"
-dependencies = [
- "buffa",
- "rustversion",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -65,25 +46,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
-name = "gogo_protobuf_anthropics_buffa"
-version = "0.9.2-20240617172848-e1dbca2775a7.1"
-source = "sparse+https://buf.build/gen/cargo/public/"
-checksum = "c70fbfe698d7bc145587753591a4cbb57abd540d73a266042840e20620d6e7d3"
-dependencies = [
- "buffa",
- "buffa-descriptor",
- "buffa-types",
- "serde",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "foldhash",
- "serde",
 ]
 
 [[package]]
@@ -174,20 +142,7 @@ name = "prometheus-scrape-parser-rs"
 version = "0.1.0"
 dependencies = [
  "buffa",
- "prometheus_prometheus_anthropics_buffa",
-]
-
-[[package]]
-name = "prometheus_prometheus_anthropics_buffa"
-version = "0.9.2-20261001224011-d7f6cfecf2b8.1"
-source = "sparse+https://buf.build/gen/cargo/public/"
-checksum = "9f1a4c22cb2bd27a59a216eb7ea4d099550bf91b224263abf7c095f13a22bd31"
-dependencies = [
- "buffa",
- "buffa-descriptor",
  "buffa-types",
- "gogo_protobuf_anthropics_buffa",
- "serde",
 ]
 
 [[package]]
@@ -212,7 +167,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4148590afebada386688f18773da617792bf2ef03ffc1e4cbd2b1d45b023e0ba"
 dependencies = [
  "serde_core",
- "serde_derive",
 ]
 
 [[package]]

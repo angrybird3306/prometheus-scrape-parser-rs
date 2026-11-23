@@ -14,4 +14,4 @@ exclude = ["examples"]
 
 [dependencies]
 buffa = "0.9.2"
-prometheus_prometheus_anthropics_buffa = { version = "0.9.2-20261001224011-d7f6cfecf2b8.1", registry = "buf" }
+buffa-types = "0.9.2"
