@@ -1,6 +1,6 @@
 [package]
 name = "prometheus-scrape-parser-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A parser for the two Prometheus exposition formats — classic text and delimited protobuf — ported from Go's expfmt"
