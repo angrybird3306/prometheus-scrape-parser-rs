@@ -10,7 +10,7 @@ lenient/strict per-line validation modes.
 
 ```toml
 [dependencies]
-prometheus-scrape-parser-rs = { git = "https://github.com/angrybird3306/prometheus-scrape-parser-rs" }
+prometheus-scrape-parser-rs = "0.1"
 ```
 
 ## Usage
