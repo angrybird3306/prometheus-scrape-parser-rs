@@ -22,9 +22,9 @@ mod common;
 use buffa::{Message, MessageField, UnknownFields};
 use prometheus_scrape_parser_rs::proto::io::prometheus::client as dto;
 use prometheus_scrape_parser_rs::{
-    Bucket, ErrorKind, HistogramValue, IntOrFloat, LabelView, MetricFamily, MetricFamilyView,
-    MetricType, MetricValue, MetricView, ProtoBufParser, ProtoFamily, Quantile, Stats,
-    SummaryValue,
+    Bucket, Error, ErrorKind, HistogramValue, IntOrFloat, LabelView, MetricFamily,
+    MetricFamilyView, MetricType, MetricValue, MetricView, ProtoBufParser, ProtoFamily, Quantile,
+    Stats, SummaryValue,
 };
 use std::borrow::Cow;
 
@@ -366,7 +366,17 @@ fn proto_reset_discards_staged_and_stats() {
         drop(family);
     }
     assert!(parser.is_waiting());
-    parser.reset();
+    // The staged partial reports as the truncation it now turns out to
+    // be, at the ordinal it would have completed under.
+    assert_eq!(
+        parser.reset(),
+        Some(Error {
+            line: 1,
+            kind: ErrorKind::InvalidProtoMessage {
+                got: "truncated final message".to_owned(),
+            },
+        })
+    );
     assert!(!parser.is_waiting());
     assert_eq!(parser.stats(), &Stats::default());
 

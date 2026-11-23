@@ -30,8 +30,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bytes()
         .await?;
 
-    let mut parser = Parser::new();
-    for family in parser.parse_text(&body, LenientMode) {
+    let mut parser = Parser::new(LenientMode);
+    for family in parser.parse_text(&body) {
         println!("{} ({:?})", family.name(), family.metric_type());
         if let Some(help) = family.help() {
             println!("  # {help}");
@@ -44,6 +44,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // End of stream: folds the tail, finalizes the stats below.
+    parser.reset()?;
     println!("{:?}", parser.stats());
     Ok(())
 }

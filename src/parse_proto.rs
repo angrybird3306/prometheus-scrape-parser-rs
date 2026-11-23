@@ -70,9 +70,9 @@ impl ProtoBufParser {
     pub(crate) fn parse_into<'a, 'p>(
         &'p mut self,
         buf: &'a [u8],
-        sink: &'p mut Stats,
+        stats: &'p mut Stats,
     ) -> ProtoIter<'a, 'p> {
-        ProtoIter::with_sink(self, buf, sink)
+        ProtoIter::with_sink(self, buf, stats)
     }
 
     /// Whether a message staged by an earlier chunk is still waiting for
@@ -83,11 +83,20 @@ impl ProtoBufParser {
 
     /// Discards the staged partial message and the accumulated stats; the
     /// next [`parse`](Self::parse) call starts a fresh stream. Staged
-    /// buffer capacity is kept.
-    pub fn reset(&mut self) {
+    /// buffer capacity is kept. `Some` reports the staged partial as the
+    /// truncation it now turns out to be, at the ordinal it would have
+    /// completed under.
+    pub fn reset(&mut self) -> Option<Error> {
+        let truncated = (!self.pending.is_empty()).then(|| Error {
+            line: self.message_no + 1,
+            kind: ErrorKind::InvalidProtoMessage {
+                got: "truncated final message".to_owned(),
+            },
+        });
         self.pending.clear();
         self.message_no = 0;
         self.stats = Stats::default();
+        truncated
     }
 
     pub fn stats(&self) -> &Stats {
@@ -126,7 +135,7 @@ pub(crate) struct ProtoIter<'a, 'p> {
     /// Receives a stats snapshot whenever this round of iteration ends, so
     /// the facade can surface the running totals of the format it last
     /// drove.
-    sink: Option<&'p mut Stats>,
+    stats: Option<&'p mut Stats>,
 }
 
 impl<'a, 'p> ProtoIter<'a, 'p> {
@@ -136,27 +145,27 @@ impl<'a, 'p> ProtoIter<'a, 'p> {
             buf,
             pos: 0,
             done: false,
-            sink: None,
+            stats: None,
         }
     }
 
     pub(crate) fn with_sink(
         parser: &'p mut ProtoBufParser,
         buf: &'a [u8],
-        sink: &'p mut Stats,
+        stats: &'p mut Stats,
     ) -> Self {
         Self {
             parser,
             buf,
             pos: 0,
             done: false,
-            sink: Some(sink),
+            stats: Some(stats),
         }
     }
 
     fn sync_sink(&mut self) {
-        if let Some(sink) = &mut self.sink {
-            **sink = self.parser.stats.clone();
+        if let Some(stats) = &mut self.stats {
+            **stats = self.parser.stats.clone();
         }
     }
 

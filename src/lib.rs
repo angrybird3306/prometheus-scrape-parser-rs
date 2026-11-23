@@ -72,6 +72,11 @@ pub struct Stats {
     /// so this counter has no Go counterpart.
     pub skipped_families: u64,
     pub pruned_families: u64,
+    /// Families the facade's [`Parser::reset`] fold completed without
+    /// yielding: a chunked feed's tail completes only half of its family,
+    /// so the facade folds it for the stats and drops the rows — drive
+    /// [`TextParser`] directly when the tail rows matter.
+    pub discarded_families: u64,
     pub last_error: Option<Error>,
 }
 

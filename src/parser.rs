@@ -13,45 +13,56 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The [`Parser`] facade: one stateful parser can parse both text and proto
-//! formats of metrics payloads.
+//! The [`Parser`] facade: one stateful parser drives both text and proto
+//! formats of metrics payloads, chaining each format's streaming state
+//! across calls and ending the stream with [`Parser::reset`].
 
-use crate::Stats;
-use crate::mode::Mode;
+use crate::error::Error;
 use crate::model::MetricFamily;
 use crate::parse_proto::{ProtoBufParser, ProtoFamily};
 use crate::parse_text::{StageArea, TextParser};
+use crate::{Mode, Stats, StrictMode};
 
-pub struct Parser {
-    stage: StageArea,
-    proto: ProtoBufParser,
-    last_stats: Stats,
+pub struct Parser<M: Mode = StrictMode> {
+    /// The text format's staged state, `None` while a `parse_text`
+    /// iteration holds it — the same in-flight invariant as `mode`.
+    stage: Option<StageArea>,
+    /// The mode instance travels with the stream, so its validation
+    /// state — `StrictMode`'s per-family rules — chains across calls;
+    /// `None` while a `parse_text` iteration holds it.
+    mode: Option<M>,
+    proto_parser: ProtoBufParser,
+    stats: Stats,
 }
 
-impl Default for Parser {
+impl<M: Mode + Default> Default for Parser<M> {
     fn default() -> Self {
-        Self::new()
+        Self::new(M::default())
     }
 }
 
-impl Parser {
-    pub fn new() -> Self {
+impl<M: Mode> Parser<M> {
+    pub fn new(mode: M) -> Self {
         Self {
-            stage: StageArea::default(),
-            proto: ProtoBufParser::new(),
-            last_stats: Stats::default(),
+            stage: None,
+            mode: Some(mode),
+            proto_parser: ProtoBufParser::new(),
+            stats: Stats::default(),
         }
     }
 
     /// Feeds one chunk of a text exposition stream and yields its
     /// families; a line the chunk boundary cut in half stages and
-    /// completes with the next call. Families borrow `buf`.
-    pub fn parse_text<'a, M: Mode>(
-        &mut self,
-        buf: &'a [u8],
-        mode: M,
-    ) -> impl Iterator<Item = MetricFamily<'a>> {
-        let stage = std::mem::take(&mut self.stage);
+    /// completes with the next call. The mode instance travels with the
+    /// stream — its validation state chains across calls, so
+    /// `StrictMode`'s per-family rules hold exactly over a chunked feed.
+    /// End the stream with [`reset`](Self::reset). Families borrow `buf`.
+    pub fn parse_text<'a>(&mut self, buf: &'a [u8]) -> impl Iterator<Item = MetricFamily<'a>> {
+        let stage = self.stage.take().unwrap_or_default();
+        let mode = self
+            .mode
+            .take()
+            .expect("mode written back when TextIter drops");
         TextIter {
             parent: self,
             inner: Some(TextParser::new(stage, mode, buf)),
@@ -65,39 +76,79 @@ impl Parser {
     /// carries owned strings.
     pub fn parse_proto<'a>(&mut self, buf: &'a [u8]) -> impl Iterator<Item = ProtoFamily<'a>> {
         let Parser {
-            proto, last_stats, ..
+            proto_parser: proto,
+            stats,
+            ..
         } = self;
-        proto.parse_into(buf, last_stats)
+        proto.parse_into(buf, stats)
     }
 
     /// Whether a staged partial — a text cut line or a proto partial
-    /// message — is still waiting for its continuation bytes. At a true
-    /// end of stream this being `true` means the final partial never
-    /// completed; [`reset`](Self::reset) discards it.
+    /// message — is still waiting for its continuation bytes.
     pub fn is_waiting(&self) -> bool {
-        self.stage.has_staged_line() || self.proto.is_waiting()
+        self.stage.as_ref().is_some_and(StageArea::has_staged_line)
+            || self.proto_parser.is_waiting()
     }
 
-    /// Discards the whole chained state — the staged partials, the carried
-    /// families, the metadata memory, the stats and line numbering — and
-    /// returns to the fresh-[`new`](Self::new) shape; staged buffer
-    /// capacities are kept. The next parse call starts a fresh stream.
-    pub fn reset(&mut self) {
-        self.stage.reset();
-        self.proto.reset();
-        self.last_stats = Stats::default();
+    /// Ends the stream: the staged text tail folds as the unterminated
+    /// final line, its families counting into
+    /// [`Stats::discarded_families`] without yielding; the chained state —
+    /// the mode's validation state included — clears for a fresh stream,
+    /// capacities kept, [`stats`](Self::stats) keeping the final totals.
+    ///
+    /// `Err` reports an unclean end: a tail the mode rejects as truncated,
+    /// a tail erroring under the fold (its own error then owns the end),
+    /// or a staged proto partial message. A lenient tolerated tail ends
+    /// `Ok`, its leftovers counted in stats.
+    pub fn reset(&mut self) -> Result<(), Error> {
+        let mut out = Ok(());
+
+        if self.stage.as_ref().is_some_and(StageArea::has_staged_line) {
+            let stage = self.stage.take().unwrap();
+            let mode = self
+                .mode
+                .take()
+                .expect("mode written back when TextIter drops");
+            let mut parser = TextParser::new(stage, mode, b"");
+            let before = parser.stats().last_error.clone();
+            let mut stats = parser.finish();
+            while parser.next_family().is_some() {
+                stats.discarded_families += 1;
+            }
+            if stats.last_error != before {
+                out = Err(stats.last_error.clone().expect("error set by the fold"));
+            }
+            let (stage, mode) = parser.release();
+            self.stage = Some(stage);
+            self.mode = Some(mode);
+            self.stats = stats;
+        }
+
+        if let Some(stage) = &mut self.stage {
+            stage.reset();
+        }
+        let proto_ended = self.proto_parser.reset();
+        if out.is_ok()
+            && let Some(error) = proto_ended
+        {
+            out = Err(error);
+        }
+        if let Some(mode) = &mut self.mode {
+            mode.reset();
+        }
+        out
     }
 
     /// The running totals of the format driven last: written back each
-    /// time an iteration ends (or is dropped), chained across calls of
-    /// that format.
+    /// time an iteration ends (or is dropped), finalized by
+    /// [`reset`](Self::reset) instead of cleared.
     pub fn stats(&self) -> &Stats {
-        &self.last_stats
+        &self.stats
     }
 }
 
 struct TextIter<'a, 'p, M: Mode> {
-    parent: &'p mut Parser,
+    parent: &'p mut Parser<M>,
     inner: Option<TextParser<'a, M>>,
 }
 
@@ -111,12 +162,14 @@ impl<'a, M: Mode> Iterator for TextIter<'a, '_, M> {
 }
 
 impl<'a, M: Mode> TextIter<'a, '_, M> {
-    /// Hands the staged state and the running stats back to the parser.
+    /// Hands the staged state, the mode and the running stats back to
+    /// the parser.
     fn write_back(&mut self) {
         if let Some(parser) = self.inner.take() {
-            self.parent.last_stats = parser.stats().clone();
-            let (stage, _) = parser.release();
-            self.parent.stage = stage;
+            self.parent.stats = parser.stats().clone();
+            let (stage, mode) = parser.release();
+            self.parent.stage = Some(stage);
+            self.parent.mode = Some(mode);
         }
     }
 }

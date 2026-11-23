@@ -16,12 +16,12 @@ prometheus-scrape-parser-rs = "0.1"
 ## Usage
 
 ```rust
-use prometheus_scrape_parser_rs::{LenientMode, MetricFamilyView, MetricView, Parser};
+use prometheus_scrape_parser_rs::{StrictMode, MetricFamilyView, MetricView, Parser};
 
-let mut parser = Parser::new();
+let mut parser = Parser::new(StrictMode);
 let payload = b"# TYPE http_requests_total counter\nhttp_requests_total{code=\"200\"} 1027\n";
 
-for family in parser.parse_text(payload, LenientMode) {
+for family in parser.parse_text(payload) {
     println!("{} ({:?})", family.name(), family.metric_type());
     for metric in family.metrics() {
         for label in metric.labels() {
@@ -31,6 +31,7 @@ for family in parser.parse_text(payload, LenientMode) {
     }
 }
 
+parser.reset().unwrap(); // the stream's true end: folds the tail, finalizes the stats
 println!("{:?}", parser.stats());
 ```
 

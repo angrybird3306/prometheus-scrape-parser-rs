@@ -42,6 +42,11 @@ pub trait Mode: Send {
     fn name_scheme(&self) -> Option<Scheme> {
         None
     }
+
+    /// Clears the per-stream validation state so the instance can
+    /// serve a fresh stream: the [`Parser`](crate::Parser) facade calls it
+    /// from `reset` after folding the stream's tail.
+    fn reset(&mut self) {}
 }
 
 /// Accepts everything the lexer can express structurally. Name charsets,
@@ -105,7 +110,7 @@ impl Scheme {
 
 #[derive(Debug, Default, Clone, Copy)]
 struct FamilyState {
-    help: bool,
+    help_info_capcured: bool,
     metric_type: Option<MetricType>,
     sample: bool,
 }
@@ -119,6 +124,12 @@ struct FamilyState {
 pub struct StrictMode {
     scheme: Scheme,
     families: HashMap<String, FamilyState>,
+}
+
+impl Default for StrictMode {
+    fn default() -> Self {
+        StrictMode::legacy()
+    }
 }
 
 impl StrictMode {
@@ -154,13 +165,12 @@ impl Mode for StrictMode {
                     self.families
                         .insert(target.to_string(), FamilyState::default());
                 }
-                let dup = self.families[target].help;
-                if dup {
+                if self.families[target].help_info_capcured {
                     return Err(at(ErrorKind::SecondHelpLine {
                         name: target.to_string(),
                     }));
                 }
-                self.families.get_mut(target).unwrap().help = true;
+                self.families.get_mut(target).unwrap().help_info_capcured = true;
                 Ok(())
             }
             LineView::Type { name, metric_type } => {
@@ -216,5 +226,9 @@ impl Mode for StrictMode {
 
     fn name_scheme(&self) -> Option<Scheme> {
         Some(self.scheme)
+    }
+
+    fn reset(&mut self) {
+        self.families.clear();
     }
 }
