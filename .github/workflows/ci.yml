@@ -1,0 +1,81 @@
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+name: Continuous Integration
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    if: github.event_name != 'schedule'
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the repo
+        uses: actions/checkout@v7
+      - name: Prepare Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Show tools version
+        run: |
+          echo Rust toolchain: "$(cargo --version)"
+          echo rustfmt: "$(cargo fmt --version)"
+          echo clippy: "$(cargo clippy --version)"
+      - name: Lint code files
+        run: make lint
+      - name: Check lint result
+        run: |
+          if git diff --quiet; then
+            echo "No code changes needed. Proceeding with tests."
+          else
+            echo "Lint auto-fixed files. Please run 'make lint' locally and commit the result."
+            echo "Modified files:"
+            git diff --name-only
+            exit 1
+          fi
+
+  test:
+    name: Test Suite (${{ matrix.target }}, rust-${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    needs: lint
+    if: always() && (github.event_name == 'schedule' || needs.lint.result == 'success')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            rust: stable
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            rust: "1.88.0"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            rust: stable
+          - target: x86_64-unknown-windows-msvc
+            os: windows-latest
+            rust: stable
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            rust: stable
+    steps:
+      - name: Checkout the repo
+        uses: actions/checkout@v7
+      - name: Prepare Rust toolchain
+        run: |
+          rustup default ${{ matrix.rust }}
+      - name: Rust toolchain version
+        run: cargo --version
+      - name: Build
+        run: cargo build --verbose
+      - name: Test
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo test --workspace --verbose
+      - name: Build example
+        run: cargo build --manifest-path examples/scrape/Cargo.toml --verbose
