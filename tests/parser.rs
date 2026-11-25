@@ -459,6 +459,35 @@ fn parser_reset_should_be_idempotent() {
     assert!(!parser.is_waiting());
 }
 
+#[test]
+fn parser_reset_stats_should_clear_the_finalized_totals() {
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"c 1\nc 2\n"), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+    assert_ne!(parser.stats(), &Stats::default());
+
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+}
+
+#[test]
+fn parser_reset_stats_should_keep_the_chained_stream_state() {
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"c 1\nc 2"), &mut families);
+    assert!(parser.is_waiting());
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+
+    assert_eq!(parser.reset(), Ok(()));
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 2);
+    assert_eq!(stats.metrics_total, 2);
+    assert_eq!(stats.discarded_families, 1);
+    assert!(!parser.is_waiting());
+}
+
 // =============================== protobuf ==================================
 
 /// One delimited counter-family message hand-encoded on the wire: family
@@ -561,6 +590,21 @@ fn parser_reset_should_report_a_staged_proto_partial() {
             },
         })
     );
+    assert!(!parser.is_waiting());
+}
+
+#[test]
+fn parser_proto_reset_stats_should_clear_the_finalized_totals() {
+    let input = proto_stream(&[("a", 1.0)]);
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_view_into(parser.parse_proto(&input), &mut families);
+    assert_eq!(parser.stats().metrics_total, 1);
+    assert_eq!(parser.reset(), Ok(()));
+    assert_ne!(parser.stats(), &Stats::default());
+
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
     assert!(!parser.is_waiting());
 }
 

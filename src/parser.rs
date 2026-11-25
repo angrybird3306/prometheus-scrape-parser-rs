@@ -99,7 +99,8 @@ impl<M: Mode> Parser<M> {
     /// `Err` reports an unclean end: a tail the mode rejects as truncated,
     /// a tail erroring under the fold (its own error then owns the end),
     /// or a staged proto partial message. A lenient tolerated tail ends
-    /// `Ok`, its leftovers counted in stats.
+    /// `Ok`, its leftovers counted in stats. The finalized totals can be
+    /// cleared with [`reset_stats`](Self::reset_stats).
     pub fn reset(&mut self) -> Result<(), Error> {
         let mut out = Ok(());
 
@@ -139,9 +140,12 @@ impl<M: Mode> Parser<M> {
         out
     }
 
-    /// The running totals of the format driven last: written back each
-    /// time an iteration ends (or is dropped), finalized by
-    /// [`reset`](Self::reset) instead of cleared.
+    /// Clears the stats.
+    pub fn reset_stats(&mut self) {
+        self.stats = Stats::default();
+    }
+
+    /// Read current stats.
     pub fn stats(&self) -> &Stats {
         &self.stats
     }
