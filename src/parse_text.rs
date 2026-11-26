@@ -83,6 +83,11 @@ impl StageArea {
         !self.line.is_empty()
     }
 
+    /// Whether an instance ended holding a family back for the next one.
+    pub(crate) fn has_carried_family(&self) -> bool {
+        self.carried.is_some()
+    }
+
     /// Clears all chained state, keeping buffer capacities.
     pub(crate) fn reset(&mut self) {
         self.line.clear();
@@ -97,8 +102,9 @@ impl StageArea {
 }
 
 /// Parses one borrowed slice; the yielded [`MetricFamily`] borrows the
-/// input, and a line the slice cuts in half stages in [`StageArea`] until
-/// its newline arrives.
+/// input, a line the slice cuts in half stages in [`StageArea`] until its
+/// newline arrives, and an aggregation family the slice leaves still
+/// gathering its sample group carries with the stage.
 pub struct TextParser<'a, M: Mode> {
     mode: M,
     input_buf: &'a [u8],
@@ -341,17 +347,24 @@ impl<'a, M: Mode> TextParser<'a, M> {
         true
     }
 
-    /// Ends the instance: the aggregation-typed family the staged cut line
-    /// extends carries over as owned text — probed from the cut line,
-    /// falling back to the last folded family (a blank or interleaved
-    /// plain line may sit between an aggregation row's lines).
+    /// Ends the instance: an aggregation family the input may still extend
+    /// carries over as owned text. A staged cut line names its family by
+    /// the probe, falling back to the last folded family (a blank or
+    /// interleaved plain line may sit between an aggregation row's lines);
+    /// a clean boundary holds the last folded family only while it still
+    /// gathers a sample group.
     fn flush_end(&mut self, carry_allowed: bool) {
-        if carry_allowed && !self.staging.line.is_empty() {
-            let staged = &self.staging.line;
+        if carry_allowed {
             let scheme = self.mode.name_scheme();
-            let slot = pending_fold_family(staged, false, scheme, &self.assembler)
-                .and_then(|name| self.assembler.aggregation_slot_of(&name))
-                .or_else(|| self.assembler.last_slot());
+            let slot = if self.staging.line.is_empty() {
+                self.assembler
+                    .last_slot()
+                    .filter(|&slot| self.assembler.gathers_sample_group(slot))
+            } else {
+                pending_fold_family(&self.staging.line, false, scheme, &self.assembler)
+                    .and_then(|name| self.assembler.aggregation_slot_of(&name))
+                    .or_else(|| self.assembler.last_slot())
+            };
             if let Some(slot) = slot {
                 self.staging.carried = self.assembler.take_aggregation_slot_owned(slot);
             }

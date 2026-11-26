@@ -54,9 +54,9 @@ pub struct Stats {
     pub lines_total: u64,
     /// Metrics parsed successfully in both formats: model Metric rows
     /// created by the text parser, protobuf Metric entries carrying the
-    /// value field their family type names. A text row a clean instance
-    /// boundary splits counts once per piece — the instances' merge by
-    /// name reassembles it.
+    /// value field their family type names. An aggregation family a
+    /// chunk boundary leaves still gathering its sample group rides to
+    /// the next call, so its rows are created once.
     pub metrics_total: u64,
     /// Text format only: input lines the mode rejected. Every rejected
     /// line counts, whether or not its family was dropped.
@@ -75,7 +75,10 @@ pub struct Stats {
     /// Families the facade's [`Parser::reset`] fold completed without
     /// yielding: a chunked feed's tail completes only half of its family,
     /// so the facade folds it for the stats and drops the rows — drive
-    /// [`TextParser`] directly when the tail rows matter.
+    /// [`TextParser`] directly when the tail rows matter. So does an
+    /// aggregation family the stream ends on while it still gathers its
+    /// sample group (a histogram without its `_sum`, say): rows never
+    /// yield half a sample group.
     pub discarded_families: u64,
     pub last_error: Option<Error>,
 }

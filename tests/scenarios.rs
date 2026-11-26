@@ -24,7 +24,9 @@
 //!
 //! Family order in expected vectors is creation order (the order each name
 //! is first mentioned), which is deterministic; Go compares its map output
-//! by name so its array order is arbitrary.
+//! by name so its array order is arbitrary. One exception: a family the
+//! input ends on while it still gathers a sample group yields after
+//! `finish` (scenario 3).
 
 use prometheus_scrape_parser_rs::{
     Bucket, ErrorKind, HistogramValue, IntOrFloat, Label, Metric, MetricFamily, MetricType,
@@ -231,32 +233,12 @@ fn text_parse_2_counters_gauges_docstrings_various_whitespace_escape_sequences_s
 fn text_parse_3_the_evil_summary_mixed_with_other_types_and_funny_comments_should_pass() {
     let input = SCENARIO_3_INPUT;
     // Creation order: my_summary (TYPE line 2), decoy, fake_sum,
-    // another_summary. Go's array order (fake_sum, decoy, ...) is map
-    // literal order only.
+    // another_summary — but my_summary's rows never gather whole sample
+    // groups (several lack their `_sum` or `_count`), and the input ends
+    // on its `# HELP` line, so the family rides to `finish` and yields
+    // last. Go's array order (fake_sum, decoy, ...) is map literal order
+    // only.
     let want = vec![
-        family(
-            "my_summary",
-            MetricType::Summary,
-            None,
-            vec![
-                summary_metric(
-                    vec![("n1", "val1")],
-                    Some(2),
-                    Some(42),
-                    Some(4711.0),
-                    vec![(0.5, 110.0), (0.9, 140.0)],
-                ),
-                summary_metric(
-                    vec![("n2", "val2"), ("n1", "val1")],
-                    Some(5),
-                    Some(5),
-                    None,
-                    vec![(-12.34, f64::NAN)],
-                ),
-                summary_metric(vec![("n1", "val2")], Some(15), None, Some(8.0), vec![]),
-                summary_metric(vec![("n1", "val3")], None, None, None, vec![(0.2, 4711.0)]),
-            ],
-        ),
         family(
             "decoy",
             MetricType::Untyped,
@@ -280,6 +262,29 @@ fn text_parse_3_the_evil_summary_mixed_with_other_types_and_funny_comments_shoul
                 None,
                 vec![(0.3, -1.2)],
             )],
+        ),
+        family(
+            "my_summary",
+            MetricType::Summary,
+            None,
+            vec![
+                summary_metric(
+                    vec![("n1", "val1")],
+                    Some(2),
+                    Some(42),
+                    Some(4711.0),
+                    vec![(0.5, 110.0), (0.9, 140.0)],
+                ),
+                summary_metric(
+                    vec![("n2", "val2"), ("n1", "val1")],
+                    Some(5),
+                    Some(5),
+                    None,
+                    vec![(-12.34, f64::NAN)],
+                ),
+                summary_metric(vec![("n1", "val2")], Some(15), None, Some(8.0), vec![]),
+                summary_metric(vec![("n1", "val3")], None, None, None, vec![(0.2, 4711.0)]),
+            ],
         ),
     ];
     assert_scenario_passes(input, want);

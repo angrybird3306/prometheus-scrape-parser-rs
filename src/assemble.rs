@@ -757,6 +757,40 @@ impl<'a> Assembler<'a> {
         .then_some(i)
     }
 
+    /// Whether the slot still gathers a sample group: an open aggregation
+    /// family with a row whose `_count`/`_sum` (histograms: their buckets
+    /// too) have not all arrived. Plain fallback rows a lenient aggregation
+    /// family holds are whole as they are.
+    pub(crate) fn gathers_sample_group(&self, slot: usize) -> bool {
+        let Some(family) = self.pending_metric_families.get(slot) else {
+            return false;
+        };
+        if family.name.as_ref().is_empty() {
+            return false;
+        }
+        match family.metric_type {
+            Some(MetricType::Summary) => family.metrics.iter().any(|m| {
+                matches!(
+                    &m.value,
+                    MetricValue::Summary(s)
+                        if s.sample_count.is_none() || s.sample_sum.is_none()
+                )
+            }),
+            Some(MetricType::Histogram | MetricType::GaugeHistogram) => {
+                family.metrics.iter().any(|m| {
+                    matches!(
+                        &m.value,
+                        MetricValue::Histogram(h)
+                            if h.buckets.is_empty()
+                                || h.sample_count.is_none()
+                                || h.sample_sum.is_none()
+                    )
+                })
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn last_slot(&self) -> Option<usize> {
         self.last_slot
     }

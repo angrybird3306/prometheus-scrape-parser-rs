@@ -53,7 +53,9 @@ impl<M: Mode> Parser<M> {
 
     /// Feeds one chunk of a text exposition stream and yields its
     /// families; a line the chunk boundary cut in half stages and
-    /// completes with the next call. The mode instance travels with the
+    /// completes with the next call, and an aggregation family the chunk
+    /// leaves still gathering its sample group stays held with the stage
+    /// instead of yielding a fragment. The mode instance travels with the
     /// stream — its validation state chains across calls, so
     /// `StrictMode`'s per-family rules hold exactly over a chunked feed.
     /// End the stream with [`reset`](Self::reset). Families borrow `buf`.
@@ -92,9 +94,12 @@ impl<M: Mode> Parser<M> {
 
     /// Ends the stream: the staged text tail folds as the unterminated
     /// final line, its families counting into
-    /// [`Stats::discarded_families`] without yielding; the chained state —
-    /// the mode's validation state included — clears for a fresh stream,
-    /// capacities kept, [`stats`](Self::stats) keeping the final totals.
+    /// [`Stats::discarded_families`] without yielding — so does an
+    /// aggregation family the stream ends on while it still gathers its
+    /// sample group (rows never yield half a sample group); the chained
+    /// state — the mode's validation state included — clears for a fresh
+    /// stream, capacities kept, [`stats`](Self::stats) keeping the final
+    /// totals.
     ///
     /// `Err` reports an unclean end: a tail the mode rejects as truncated,
     /// a tail erroring under the fold (its own error then owns the end),
@@ -104,7 +109,11 @@ impl<M: Mode> Parser<M> {
     pub fn reset(&mut self) -> Result<(), Error> {
         let mut out = Ok(());
 
-        if self.stage.as_ref().is_some_and(StageArea::has_staged_line) {
+        if self
+            .stage
+            .as_ref()
+            .is_some_and(|stage| stage.has_staged_line() || stage.has_carried_family())
+        {
             let stage = self.stage.take().unwrap();
             let mode = self
                 .mode

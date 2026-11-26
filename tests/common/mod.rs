@@ -188,15 +188,15 @@ pub fn sorted_by_name<'a>(mut families: Vec<MetricFamily<'a>>) -> Vec<MetricFami
 }
 
 /// The cross-instance twin of [`merge_by_name`]: instances additionally fold
-/// summary/histogram rows that a feed boundary split back into one metric,
-/// and backfill family metadata. A clean line boundary carries nothing, so
-/// an aggregation row's continuation can land in a fresh instance; its
-/// fragments carry disjoint halves (buckets/quantiles vs
-/// sample_count/sample_sum) under one label set, and the fold reconstructs
-/// the whole-input row. A HELP/TYPE line placed after a family's samples
-/// enriches only the instances after it — the merged family takes the
-/// first metadata any instance carries, which is exactly the whole-input
-/// fold's.
+/// summary/histogram rows a feed boundary split back into one metric, and
+/// backfill family metadata. A boundary after interleaved plain lines (or a
+/// layout that interleaves rows) can still land an aggregation row's
+/// continuation in a fresh instance; its fragments carry disjoint halves
+/// (buckets/quantiles vs sample_count/sample_sum) under one label set, and
+/// the fold reconstructs the whole-input row. A HELP/TYPE line placed after
+/// a family's samples enriches only the instances after it — the merged
+/// family takes the first metadata any instance carries, which is exactly
+/// the whole-input fold's.
 pub fn merge_instances_by_name<'a>(mut families: Vec<MetricFamily<'a>>) -> Vec<MetricFamily<'a>> {
     let mut merged: Vec<MetricFamily<'a>> = Vec::new();
     for family in families.drain(..) {

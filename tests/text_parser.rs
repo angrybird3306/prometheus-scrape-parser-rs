@@ -29,8 +29,8 @@ use common::{
     modes, parse, payloads, scattered_histogram, sorted_by_name,
 };
 use prometheus_scrape_parser_rs::{
-    ErrorKind, LenientMode, MetricFamily, MetricType, MetricValue, StageArea, Stats, StrictMode,
-    TextParser,
+    ErrorKind, IntOrFloat, LenientMode, MetricFamily, MetricType, MetricValue, StageArea, Stats,
+    StrictMode, TextParser,
 };
 
 /// Chains one TextParser instance per slice of a piece iterator,
@@ -87,9 +87,10 @@ fn collect_chunked<'a>(
     collect_pieces(input.chunks(chunk.max(1)), mode)
 }
 
-/// Line-group variant: each instance receives whole lines, so every
-/// instance boundary is clean and the carry never triggers. An
-/// unterminated tail becomes the last instance's piece.
+/// Line-group variant: each instance receives whole lines, so no line
+/// ever stages across an instance boundary. An aggregation family still
+/// gathering its sample group carries across; an unterminated tail
+/// becomes the last instance's piece.
 fn collect_by_lines<'a>(
     input: &'a [u8],
     lines_per_instance: usize,
@@ -163,9 +164,11 @@ fn text_parser_line_per_line_should_merge_equal_whole_slice_exactly() {
             let (whole, whole_stats) = parse(input, mode);
             for lines_per_instance in [1, 3] {
                 let (families, stats) = collect_by_lines(input, lines_per_instance, mode);
-                // One line per instance splits every aggregation row at a
-                // clean boundary; the row-aware merge reassembles it. A
-                // lenient skip drops the whole family in the whole-slice run, but the
+                // Aggregation families a one-line instance leaves
+                // gathering their sample group ride whole to the next
+                // instance; interleaved rows still fragment and the
+                // row-aware merge reassembles them. A lenient skip drops
+                // the whole family in the whole-slice run, but the
                 // zero-copy instances that yielded before the skip keep
                 // their piece — the same exemption the differential
                 // carry, so family equality is asserted on clean inputs.
@@ -288,9 +291,9 @@ fn text_parser_scattered_histogram_should_merge_across_instances() {
         for chunk in [256, 2048] {
             let (families, stats) = collect_chunked(&input, chunk, mode);
             // The padding family interleaves plain lines between the
-            // histogram rows, so boundaries often cut neither the row's
-            // line nor the family's: rows split into fragments the merge
-            // folds back together.
+            // histogram rows: a boundary after a padding line flushes the
+            // family, and its continuation rows fragment — the merge
+            // folds them back together.
             assert_eq!(
                 sorted_by_name(merge_instances_by_name(families)),
                 expected,
@@ -360,6 +363,47 @@ fn text_parser_carried_prefix_should_join_borrowed_suffix() {
         sorted_by_name(whole),
         "carried prefix and borrowed suffix must reassemble the whole-slice rows"
     );
+}
+
+#[test]
+fn text_parser_clean_boundary_should_carry_an_incomplete_sample_group() {
+    // The boundary falls on the newline after the bucket row: the row
+    // still gathers its `_sum`/`_count`, the family rides the StageArea
+    // whole, and the continuation instance completes it from borrowed
+    // lines.
+    let input: &[u8] = b"# TYPE h histogram\n\
+         h_bucket{handler=\"/a\",le=\"+Inf\"} 1\n\
+         h_sum{handler=\"/a\"} 1.5\n\
+         h_count{handler=\"/a\"} 1\n";
+    let mut staging = StageArea::default();
+
+    let mut first = TextParser::new(std::mem::take(&mut staging), LenientMode, &input[..54]);
+    let mut families = Vec::new();
+    while let Some(family) = first.next_family() {
+        families.push(family);
+    }
+    assert!(
+        families.is_empty(),
+        "the incomplete sample group must carry over, not yield"
+    );
+    let (staging, mode) = first.release();
+
+    let mut parser = TextParser::new(staging, mode, &input[54..]);
+    while let Some(family) = parser.next_family() {
+        families.push(family);
+    }
+    parser.finish();
+    while let Some(family) = parser.next_family() {
+        families.push(family);
+    }
+
+    assert_eq!(families.len(), 1);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(1)));
+    assert_eq!(histogram.sample_sum, Some(1.5));
+    assert_eq!(histogram.buckets.len(), 1);
 }
 
 #[test]

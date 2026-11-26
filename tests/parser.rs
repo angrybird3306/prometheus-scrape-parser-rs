@@ -20,17 +20,18 @@
 mod common;
 
 use common::{
-    AGGREGATES, CROSS_FAMILY, TestMode, merge_instances_by_name, modes, owned, parse, parse_strict,
-    sorted_by_name,
+    AGGREGATES, CROSS_FAMILY, TestMode, merge_by_name, merge_instances_by_name,
+    mid_row_cut_histogram, modes, owned, parse, parse_strict, sorted_by_name,
 };
 use prometheus_scrape_parser_rs::{
-    Error, ErrorKind, LenientMode, MetricFamily, MetricFamilyView, MetricType, MetricValue,
-    MetricView, Mode, Parser, ProtoFamily, Scheme, Stats, StrictMode,
+    Error, ErrorKind, IntOrFloat, LenientMode, MetricFamily, MetricFamilyView, MetricType,
+    MetricValue, MetricView, Mode, Parser, ProtoFamily, Scheme, Stats, StrictMode,
 };
 use std::borrow::Cow;
 
 /// Splits the input into `parts` newline-terminated pieces (clean line
-/// boundaries: nothing staged between calls).
+/// boundaries: no line stages between calls; a family still gathering its
+/// sample group carries across them).
 fn split_lines(input: &[u8], parts: usize) -> Vec<&[u8]> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -79,14 +80,12 @@ fn parser_text_chunked_chain_equals_whole_reference() {
         for chunk in &chunks {
             merge_into(parser.parse_text(chunk), &mut families);
         }
-        // Plain families split into per-call pieces at the clean line
-        // boundaries; the row-aware merge reassembles the whole-buffer
-        // output.
+        // An aggregation family a boundary leaves still gathering its
+        // sample group rides to the next call; a family split between
+        // whole rows lands as per-chunk pieces the merge by name
+        // reassembles.
         assert_eq!(common::merge_instances_by_name(families), whole);
-        // Line and family counters are instance-independent. metrics_total
-        // counts per-instance model rows: an aggregation row a clean
-        // boundary splits is created once per piece and only the merge
-        // reassembles it, so it has no whole-buffer reference here.
+        // Line and family counters are instance-independent.
         let stats = parser.stats();
         assert_eq!(stats.lines_total, whole_stats.lines_total);
         assert_eq!(stats.skipped_lines, whole_stats.skipped_lines);
@@ -95,6 +94,486 @@ fn parser_text_chunked_chain_equals_whole_reference() {
         assert_eq!(stats.last_error, whole_stats.last_error);
         assert!(!parser.is_waiting());
     }
+}
+
+#[test]
+fn parser_text_clean_boundary_inside_a_histogram_should_yield_one_complete_family() {
+    // A chunk ending exactly on a newline mid-histogram-family must not
+    // flush the half-folded family: the aggregation family stays open
+    // across the clean boundary and yields once, complete.
+    let part1 = b"# HELP rpc_duration RPC duration.\n\
+                  # TYPE rpc_duration histogram\n\
+                  rpc_duration_bucket{le=\"0.1\"} 1\n\
+                  rpc_duration_bucket{le=\"0.5\"} 3\n";
+    let part2 = b"rpc_duration_bucket{le=\"1.0\"} 4\n\
+                  rpc_duration_bucket{le=\"+Inf\"} 5\n\
+                  rpc_duration_count 5\n\
+                  rpc_duration_sum 7.5\n";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+
+    assert_eq!(
+        families.len(),
+        1,
+        "a clean boundary must not split the family in two yields"
+    );
+    assert_eq!(families[0].name.as_ref(), "rpc_duration");
+    assert_eq!(families[0].metric_type, MetricType::Histogram);
+    assert_eq!(families[0].help.as_deref(), Some("RPC duration."));
+    assert_eq!(families[0].metrics.len(), 1);
+    assert!(families[0].metrics[0].labels.is_empty());
+    assert_eq!(families[0].metrics[0].timestamp, None);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(5)));
+    assert_eq!(histogram.sample_sum, Some(7.5));
+    assert_eq!(
+        histogram
+            .buckets
+            .iter()
+            .map(|b| (b.upper_bound, b.cumulative_count))
+            .collect::<Vec<_>>(),
+        [
+            (0.1, IntOrFloat::Int(1)),
+            (0.5, IntOrFloat::Int(3)),
+            (1.0, IntOrFloat::Int(4)),
+            (f64::INFINITY, IntOrFloat::Int(5))
+        ]
+    );
+}
+
+#[test]
+fn parser_text_clean_boundary_inside_a_summary_should_yield_one_complete_family() {
+    let part1 = b"# TYPE rpc_latencies summary\n\
+                  rpc_latencies{quantile=\"0.5\"} 110\n\
+                  rpc_latencies{quantile=\"0.9\"} 140\n";
+    let part2 = b"rpc_latencies_sum 4711\n\
+                  rpc_latencies_count 42\n";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+
+    assert_eq!(families.len(), 1, "the sample group must stay whole");
+    assert_eq!(families[0].name.as_ref(), "rpc_latencies");
+    assert_eq!(families[0].metric_type, MetricType::Summary);
+    assert_eq!(families[0].metrics.len(), 1);
+    let MetricValue::Summary(summary) = &families[0].metrics[0].value else {
+        panic!("the family must hold the summary");
+    };
+    assert_eq!(summary.sample_count, Some(42));
+    assert_eq!(summary.sample_sum, Some(4711.0));
+    assert_eq!(
+        summary
+            .quantiles
+            .iter()
+            .map(|q| (q.quantile, q.value))
+            .collect::<Vec<_>>(),
+        [(0.5, 110.0), (0.9, 140.0)]
+    );
+}
+
+#[test]
+fn parser_text_clean_boundary_before_the_sum_should_hold_the_family() {
+    // A row carrying its `_count` but not its `_sum` still gathers: the
+    // boundary between the counter rows must not yield it half.
+    let part1 = b"# TYPE rpc_duration histogram\n\
+                  rpc_duration_bucket{le=\"+Inf\"} 5\n\
+                  rpc_duration_count 5\n";
+    let part2 = b"rpc_duration_sum 7.5\n";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    assert!(families.is_empty(), "the sample group is missing its sum");
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+
+    assert_eq!(families.len(), 1);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(5)));
+    assert_eq!(histogram.sample_sum, Some(7.5));
+    assert_eq!(
+        histogram
+            .buckets
+            .iter()
+            .map(|b| (b.upper_bound, b.cumulative_count))
+            .collect::<Vec<_>>(),
+        [(f64::INFINITY, IntOrFloat::Int(5))]
+    );
+}
+
+#[test]
+fn parser_text_clean_boundary_after_a_whole_sample_group_should_yield_the_family_at_once() {
+    let part1 = b"# TYPE rpc_duration histogram\n\
+                  rpc_duration_bucket{le=\"+Inf\"} 5\n\
+                  rpc_duration_sum 7.5\n\
+                  rpc_duration_count 5\n";
+    let part2 = b"other 1\n";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    assert_eq!(families.len(), 1, "a whole sample group never holds");
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(5)));
+    assert_eq!(histogram.sample_sum, Some(7.5));
+    assert_eq!(
+        histogram
+            .buckets
+            .iter()
+            .map(|b| (b.upper_bound, b.cumulative_count))
+            .collect::<Vec<_>>(),
+        [(f64::INFINITY, IntOrFloat::Int(5))]
+    );
+
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(families.len(), 2);
+    assert_eq!(families[1].name.as_ref(), "other");
+    assert_eq!(parser.reset(), Ok(()));
+}
+
+#[test]
+fn parser_text_clean_boundary_between_whole_rows_should_yield_complete_rows_per_chunk() {
+    // A multi-row family splits between two whole rows: each chunk yields
+    // its rows complete under the replayed metadata — rows never split,
+    // whole families do.
+    let part1 = b"# TYPE rpc_duration histogram\n\
+                  rpc_duration_bucket{handler=\"/a\",le=\"+Inf\"} 1\n\
+                  rpc_duration_sum{handler=\"/a\"} 1.5\n\
+                  rpc_duration_count{handler=\"/a\"} 1\n";
+    let part2 = b"rpc_duration_bucket{handler=\"/b\",le=\"+Inf\"} 2\n\
+                  rpc_duration_sum{handler=\"/b\"} 2.5\n\
+                  rpc_duration_count{handler=\"/b\"} 2\n";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    assert_eq!(families.len(), 1);
+    let MetricValue::Histogram(head) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(head.sample_count, Some(IntOrFloat::Int(1)));
+    assert_eq!(head.sample_sum, Some(1.5));
+    assert_eq!(
+        families[0].metrics[0]
+            .labels
+            .iter()
+            .map(|l| (l.name.as_ref(), l.value.as_ref()))
+            .collect::<Vec<_>>(),
+        [("handler", "/a")]
+    );
+
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(families.len(), 2);
+    assert_eq!(families[1].name.as_ref(), "rpc_duration");
+    assert_eq!(families[1].metric_type, MetricType::Histogram);
+    let MetricValue::Histogram(tail) = &families[1].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(tail.sample_count, Some(IntOrFloat::Int(2)));
+    assert_eq!(tail.sample_sum, Some(2.5));
+    assert_eq!(
+        families[1].metrics[0]
+            .labels
+            .iter()
+            .map(|l| (l.name.as_ref(), l.value.as_ref()))
+            .collect::<Vec<_>>(),
+        [("handler", "/b")]
+    );
+    assert_eq!(parser.reset(), Ok(()));
+}
+
+#[test]
+fn parser_text_blank_and_comment_lines_should_not_break_the_hold() {
+    // A blank line and a comment sit between the bucket rows and the
+    // boundary: neither touches the family, the hold keeps waiting for
+    // the rest of the sample group.
+    let part1 = b"# TYPE rpc_duration histogram\n\
+                  rpc_duration_bucket{le=\"+Inf\"} 5\n\
+                  \n\
+                  # a comment\n";
+    let part2 = b"rpc_duration_sum 7.5\n\
+                  rpc_duration_count 5\n";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    assert!(
+        families.is_empty(),
+        "the sample group is missing count and sum"
+    );
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+
+    assert_eq!(families.len(), 1);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(5)));
+    assert_eq!(histogram.sample_sum, Some(7.5));
+    assert_eq!(histogram.buckets.len(), 1);
+}
+
+/// Offsets just past every newline, the clean line boundaries of a
+/// payload.
+fn line_boundaries(input: &[u8]) -> Vec<usize> {
+    (0..input.len())
+        .filter(|&i| input[i] == b'\n')
+        .map(|i| i + 1)
+        .collect()
+}
+
+/// `# TYPE h histogram` plus one whole sample group per handler.
+fn multi_row_histogram() -> Vec<u8> {
+    let mut out = Vec::from(&b"# HELP h handlers.\n# TYPE h histogram\n"[..]);
+    for handler in ["/a", "/b", "/c"] {
+        for le in ["1", "10", "+Inf"] {
+            out.extend_from_slice(
+                format!("h_bucket{{handler=\"{handler}\",le=\"{le}\"}} 1\n").as_bytes(),
+            );
+        }
+        out.extend_from_slice(format!("h_sum{{handler=\"{handler}\"}} 1.5\n").as_bytes());
+        out.extend_from_slice(format!("h_count{{handler=\"{handler}\"}} 1\n").as_bytes());
+    }
+    out
+}
+
+/// Whether every yielded aggregation row carries its whole sample
+/// group; plain rows are whole as they are.
+fn rows_whole(families: &[MetricFamily<'_>]) -> bool {
+    families.iter().all(|family| match family.metric_type {
+        MetricType::Summary => family.metrics.iter().all(|metric| match &metric.value {
+            MetricValue::Summary(summary) => {
+                summary.sample_count.is_some() && summary.sample_sum.is_some()
+            }
+            _ => true,
+        }),
+        MetricType::Histogram | MetricType::GaugeHistogram => {
+            family.metrics.iter().all(|metric| match &metric.value {
+                MetricValue::Histogram(histogram) => {
+                    !histogram.buckets.is_empty()
+                        && histogram.sample_count.is_some()
+                        && histogram.sample_sum.is_some()
+                }
+                _ => true,
+            })
+        }
+        _ => true,
+    })
+}
+
+fn run_cut<'a>(payload: &'a [u8], cut: usize, mode: TestMode) -> (Vec<MetricFamily<'a>>, Stats) {
+    match mode {
+        TestMode::Lenient => run_cut_with(payload, cut, LenientMode),
+        TestMode::StrictUtf8 => run_cut_with(payload, cut, StrictMode::utf8()),
+        TestMode::StrictLegacy => run_cut_with(payload, cut, StrictMode::legacy()),
+    }
+}
+
+fn run_cut_with<'a, M: Mode>(
+    payload: &'a [u8],
+    cut: usize,
+    mode: M,
+) -> (Vec<MetricFamily<'a>>, Stats) {
+    let mut parser = Parser::new(mode);
+    let mut families: Vec<MetricFamily<'a>> = parser.parse_text(&payload[..cut]).collect();
+    families.extend(parser.parse_text(&payload[cut..]));
+    assert_eq!(parser.reset(), Ok(()), "{cut}: the stream ends cleanly");
+    (families, parser.stats().clone())
+}
+
+/// Feeds `payload` split at every clean line boundary: an aggregation
+/// family a boundary leaves still gathering its sample group must hold
+/// instead of yielding a fragment.
+fn assert_every_clean_boundary_keeps_sample_groups_whole(
+    payload: &[u8],
+    mode: TestMode,
+    what: &str,
+) {
+    let (whole, whole_stats) = parse(payload, mode);
+    for cut in line_boundaries(payload) {
+        let what = format!("{what}/{cut}");
+        let (families, stats) = run_cut(payload, cut, mode);
+        assert!(
+            rows_whole(&families),
+            "{what}: a sample group yielded split"
+        );
+        assert_eq!(
+            merge_by_name(families),
+            whole,
+            "{what}: the chunked pieces must merge to the whole"
+        );
+        assert_eq!(
+            stats.metrics_total, whole_stats.metrics_total,
+            "{what}: metrics"
+        );
+        assert_eq!(stats.discarded_families, 0, "{what}: discards");
+    }
+}
+
+#[test]
+fn parser_text_every_clean_boundary_lenient_should_never_split_a_sample_group() {
+    let multi_row = multi_row_histogram();
+    let mid_row = mid_row_cut_histogram();
+    for (what, payload) in [
+        ("aggregates", AGGREGATES),
+        ("multi_row", &multi_row),
+        ("mid_row", &mid_row),
+    ] {
+        assert_every_clean_boundary_keeps_sample_groups_whole(payload, TestMode::Lenient, what);
+    }
+}
+
+#[test]
+fn parser_text_every_clean_boundary_strict_utf8_should_never_split_a_sample_group() {
+    let multi_row = multi_row_histogram();
+    let mid_row = mid_row_cut_histogram();
+    for (what, payload) in [
+        ("aggregates", AGGREGATES),
+        ("multi_row", &multi_row),
+        ("mid_row", &mid_row),
+    ] {
+        assert_every_clean_boundary_keeps_sample_groups_whole(payload, TestMode::StrictUtf8, what);
+    }
+}
+
+#[test]
+fn parser_text_every_clean_boundary_strict_legacy_should_never_split_a_sample_group() {
+    let multi_row = multi_row_histogram();
+    let mid_row = mid_row_cut_histogram();
+    for (what, payload) in [
+        ("aggregates", AGGREGATES),
+        ("multi_row", &multi_row),
+        ("mid_row", &mid_row),
+    ] {
+        assert_every_clean_boundary_keeps_sample_groups_whole(
+            payload,
+            TestMode::StrictLegacy,
+            what,
+        );
+    }
+}
+
+#[test]
+fn parser_strict_abort_after_a_clean_boundary_hold_should_yield_the_held_family_with_the_staged() {
+    // An abort defuses the hold like any staged family: whatever the
+    // instance holds yields, incomplete rows included.
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(
+        parser.parse_text(b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n"),
+        &mut families,
+    );
+    merge_into(parser.parse_text(b"h_count -5\n"), &mut families);
+
+    assert_eq!(families.len(), 1, "the abort yields the held family");
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, None);
+    assert_eq!(histogram.sample_sum, None);
+    assert_eq!(histogram.buckets.len(), 1);
+    assert_eq!(families[0].metrics[0].labels, []);
+
+    let stats = parser.stats();
+    assert_eq!(
+        stats.last_error,
+        Some(Error {
+            line: 3,
+            kind: ErrorKind::NegativeHistogramCount {
+                family: "h".to_owned(),
+            },
+        })
+    );
+    assert_eq!(parser.reset(), Ok(()));
+}
+
+#[test]
+fn parser_lenient_fallback_rows_inside_a_histogram_should_stay_whole() {
+    // A lenient fallback row (bad `le`) is a plain sample: whole as it
+    // stands, and it never keeps the real rows from gathering across a
+    // boundary.
+    let part1 = b"# TYPE h histogram\n\
+                  h_bucket{le=\"1\"} 1\n\
+                  h_bucket{le=\"bla\"} 2\n";
+    let part2 = b"h_sum 1.5\n\
+                  h_count 1\n";
+
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    assert!(families.is_empty(), "the real row still gathers");
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].metrics.len(), 2);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the first row must be the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(1)));
+    assert_eq!(histogram.sample_sum, Some(1.5));
+    assert_eq!(histogram.buckets.len(), 1);
+    assert_eq!(families[0].metrics[1].value, MetricValue::Sample(2.0));
+    assert!(families[0].metrics[1].labels.is_empty());
+}
+
+#[test]
+fn parser_lenient_skipped_lines_should_keep_the_sample_group_gathering() {
+    // A rejected line drops itself, the row keeps gathering: the negative
+    // count cannot end the sample group, the hold waits for the real one.
+    let part1 = b"# TYPE h histogram\n\
+                  h_bucket{le=\"+Inf\"} 1\n\
+                  h_count -5\n";
+    let part2 = b"h_sum 1.5\n\
+                  h_count 2\n";
+
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    assert!(families.is_empty(), "the sample group is missing its sum");
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+
+    assert_eq!(families.len(), 1);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(2)));
+    assert_eq!(histogram.sample_sum, Some(1.5));
+    assert_eq!(histogram.buckets.len(), 1);
+    assert_eq!(parser.stats().skipped_lines, 1);
+}
+
+#[test]
+fn parser_lenient_lex_error_should_drop_the_family_without_a_fragment() {
+    // A lex error drops the whole family (lenient's whole-family skip): no
+    // fragment yields and nothing stays held.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(
+        parser.parse_text(b"# TYPE h histogram\nh_bucket{le=\"1\"} bad\n"),
+        &mut families,
+    );
+    assert!(families.is_empty());
+    assert_eq!(parser.reset(), Ok(()));
+
+    let stats = parser.stats();
+    assert_eq!(stats.skipped_families, 1);
+    assert_eq!(stats.discarded_families, 0);
+    assert_eq!(stats.metrics_total, 0);
 }
 
 #[test]
@@ -339,6 +818,64 @@ fn parser_reset_should_fold_the_carried_aggregation_tail() {
     assert_eq!(stats.discarded_families, 1);
     assert_eq!(stats.last_error, None);
     assert!(!parser.is_waiting());
+}
+
+#[test]
+fn parser_reset_on_a_clean_end_should_discard_a_family_still_gathering_its_sample_group() {
+    // The stream ends on a line boundary while the histogram still
+    // gathers: rows never yield half a sample group, the family counts
+    // into discarded_families.
+    fn run<M: Mode>(mode: M, what: &str) {
+        let mut parser = Parser::new(mode);
+        let mut families = Vec::new();
+        merge_into(
+            parser.parse_text(b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n"),
+            &mut families,
+        );
+        assert!(families.is_empty(), "{what}: the incomplete family holds");
+        assert_eq!(parser.reset(), Ok(()), "{what}");
+        let stats = parser.stats();
+        assert_eq!(stats.lines_total, 2, "{what}");
+        assert_eq!(stats.metrics_total, 1, "{what}");
+        assert_eq!(
+            stats.discarded_families, 1,
+            "{what}: the group never turned whole"
+        );
+        assert_eq!(stats.last_error, None, "{what}");
+        assert!(!parser.is_waiting());
+    }
+    run(LenientMode, "lenient");
+    run(StrictMode::legacy(), "strict-legacy");
+    run(StrictMode::utf8(), "strict-utf8");
+}
+
+#[test]
+fn parser_reset_on_a_truncated_end_should_discard_the_held_family_with_the_tail() {
+    // The hold from the clean boundary rides the truncated tail: strict
+    // reports the truncation, lenient tolerates it — either way the family
+    // folds for the stats alone, never yielding.
+    fn run<M: Mode>(mode: M, ended: Result<(), Error>, what: &str) {
+        let mut parser = Parser::new(mode);
+        let mut families = Vec::new();
+        merge_into(
+            parser.parse_text(b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n"),
+            &mut families,
+        );
+        merge_into(parser.parse_text(b"h_sum 1.5"), &mut families);
+        assert!(families.is_empty(), "{what}");
+        assert!(parser.is_waiting(), "{what}");
+        assert_eq!(parser.reset(), ended, "{what}");
+        assert_eq!(parser.stats().discarded_families, 1, "{what}");
+    }
+    run(
+        StrictMode::legacy(),
+        Err(Error {
+            line: 3,
+            kind: ErrorKind::UnexpectedEof,
+        }),
+        "strict",
+    );
+    run(LenientMode, Ok(()), "lenient");
 }
 
 #[test]
