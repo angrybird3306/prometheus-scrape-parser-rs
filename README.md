@@ -10,7 +10,7 @@ lenient/strict per-line validation modes.
 
 ```toml
 [dependencies]
-prometheus-scrape-parser-rs = "0.1"
+prometheus-scrape-parser-rs = "0.2"
 ```
 
 ## Usage
