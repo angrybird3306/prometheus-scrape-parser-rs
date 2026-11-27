@@ -410,24 +410,6 @@ impl<'a> Assembler<'a> {
         }
     }
 
-    /// Removes one family by final name without yielding it: the slot turns
-    /// into a default shell and the name leaves the index and the metadata
-    /// memory — a whole-input fold loses the family here too. Slots never
-    /// shift outside [`Assembler::flush_ready`], so every key keeps pointing
-    /// at its own family.
-    pub(crate) fn drop_family(&mut self, resolved: &str) {
-        if let Some(&i) = self.index.get(resolved) {
-            self.pending_metric_families[i] = PendingMetricFamily::default();
-            self.index.remove(resolved);
-        }
-        self.created.remove(resolved);
-        self.created_owned.remove(resolved);
-        self.typed.remove(resolved);
-        self.typed_owned.remove(resolved);
-        self.known.remove(resolved);
-        self.known_owned.0.remove(resolved);
-    }
-
     /// Folds a HELP line: first wins, on the instance and in the memory.
     pub(crate) fn fold_help(&mut self, name: Token<'a>, text: Token<'a>) {
         let i = self.resolve_idx(&name);

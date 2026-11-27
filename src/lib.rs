@@ -64,12 +64,12 @@ pub struct Stats {
     /// Protobuf format only: Metric entries skipped — a Metric without
     /// the value field its family type names.
     pub skipped_metrics: u64,
-    /// Family-level skips: rejected lines whose error named the family
-    /// they fold into (text — the lenient skip drops that family when it
-    /// exists), and whole dropped family messages (protobuf: an unknown
-    /// type or a wire-level failure). Go implementation instead aborts at
-    /// the first error and keeps the incomplete family in its partial map,
-    /// so this counter has no Go counterpart.
+    /// Family-level skips: whole dropped family messages (protobuf: an
+    /// unknown type or a wire-level failure). The text format drops
+    /// single lines, not families, so lenient text parsing leaves this at
+    /// zero. Go implementation instead aborts at the first error and
+    /// keeps the incomplete family in its partial map, so this counter
+    /// has no Go counterpart.
     pub skipped_families: u64,
     pub pruned_families: u64,
     /// Families the facade's [`Parser::reset`] fold completed without

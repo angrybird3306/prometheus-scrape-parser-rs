@@ -84,24 +84,15 @@ pub struct SampleLine<'a> {
     pub timestamp_raw: Option<Cow<'a, str>>,
 }
 
-/// A lex failure together with the metric name the failing line carries, so
-/// the lenient skip can drop exactly the family the error belongs to.
+/// A lex failure.
 #[derive(Debug, Clone)]
 pub(crate) struct LexError {
     pub kind: ErrorKind,
-    pub family: Option<String>,
 }
 
 impl LexError {
-    fn bare(kind: ErrorKind) -> Self {
-        LexError { kind, family: None }
-    }
-
-    fn for_family(kind: ErrorKind, family: &Token<'_>) -> Self {
-        LexError {
-            kind,
-            family: Some(family.decoded.to_string()),
-        }
+    fn new(kind: ErrorKind) -> Self {
+        LexError { kind }
     }
 }
 
@@ -578,15 +569,15 @@ fn lex_comment<'a, 'l, S: Stage<'a, 'l>>(
     }
     let is_help = keyword == b"HELP";
     lx.skip_blanks();
-    let name = lx.read_name(true, scratch).map_err(LexError::bare)?;
-    check_escape(&name, scheme).map_err(LexError::bare)?;
+    let name = lx.read_name(true, scratch).map_err(LexError::new)?;
+    check_escape(&name, scheme).map_err(LexError::new)?;
     if lx.cur.is_none() {
         return Ok(LineView::Comment);
     }
     if !matches!(lx.cur, Some(b' ') | Some(b'\t')) {
-        return Err(LexError::bare(ErrorKind::InvalidMetricNameInComment));
+        return Err(LexError::new(ErrorKind::InvalidMetricNameInComment));
     }
-    check_metric_name_scheme(&name.decoded, scheme).map_err(LexError::bare)?;
+    check_metric_name_scheme(&name.decoded, scheme).map_err(LexError::new)?;
     lx.skip_blanks();
     if lx.cur.is_none() {
         return Ok(LineView::Comment);
@@ -594,23 +585,20 @@ fn lex_comment<'a, 'l, S: Stage<'a, 'l>>(
     if is_help {
         let raw = lx.rest_from_current();
         let (decoded, unknown_escape) =
-            decode_token(raw, "help text", lx.eol_is_newline, &lx.stage).map_err(LexError::bare)?;
+            decode_token(raw, "help text", lx.eol_is_newline, &lx.stage).map_err(LexError::new)?;
         let text = Token {
             decoded,
             unknown_escape,
         };
-        check_escape(&text, scheme).map_err(LexError::bare)?;
+        check_escape(&text, scheme).map_err(LexError::new)?;
         Ok(LineView::Help { name, text })
     } else {
         let raw = lx.rest_from_current();
         match parse_metric_type(raw) {
             Some(metric_type) => Ok(LineView::Type { name, metric_type }),
-            None => Err(LexError::for_family(
-                ErrorKind::UnknownMetricType {
-                    got: String::from_utf8_lossy(raw).into_owned(),
-                },
-                &name,
-            )),
+            None => Err(LexError::new(ErrorKind::UnknownMetricType {
+                got: String::from_utf8_lossy(raw).into_owned(),
+            })),
         }
     }
 }
@@ -625,19 +613,14 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
 ) -> Result<LineView<'l>, LexError> {
     let mut name: Option<Token<'l>> = None;
     let mut name_inside = false;
-    // Errors before the metric name is resolved carry no family; afterwards
-    // they carry the parsed name (Go associates them with the current family).
-    let err = |e: ErrorKind, name: &Option<Token<'l>>| match name {
-        Some(n) => LexError::for_family(e, n),
-        None => LexError::bare(e),
-    };
+    let err = |e: ErrorKind| LexError::new(e);
     if !started_with_brace {
-        let tok = lx.read_name(true, scratch).map_err(|e| err(e, &name))?;
+        let tok = lx.read_name(true, scratch).map_err(err)?;
         if tok.decoded.is_empty() {
-            return Err(LexError::bare(ErrorKind::InvalidMetricName));
+            return Err(LexError::new(ErrorKind::InvalidMetricName));
         }
-        check_escape(&tok, scheme).map_err(LexError::bare)?;
-        check_metric_name_scheme(&tok.decoded, scheme).map_err(LexError::bare)?;
+        check_escape(&tok, scheme).map_err(LexError::new)?;
+        check_metric_name_scheme(&tok.decoded, scheme).map_err(LexError::new)?;
         name = Some(tok);
         lx.skip_blanks_if_current_blank();
     }
@@ -646,79 +629,64 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
             lx.skip_blanks();
             if lx.cur == Some(b'}') {
                 if name.is_none() {
-                    return Err(LexError::bare(ErrorKind::InvalidMetricName));
+                    return Err(LexError::new(ErrorKind::InvalidMetricName));
                 }
                 lx.skip_blanks();
                 break;
             }
-            let label_name = lx.read_name(false, scratch).map_err(|e| err(e, &name))?;
-            check_escape(&label_name, scheme).map_err(|e| err(e, &name))?;
+            let label_name = lx.read_name(false, scratch).map_err(err)?;
+            check_escape(&label_name, scheme).map_err(err)?;
             if label_name.decoded.is_empty() {
-                return Err(err(
-                    ErrorKind::InvalidLabelNameForMetric {
-                        family: name
-                            .as_ref()
-                            .map(|n| n.decoded.to_string())
-                            .unwrap_or_default(),
-                    },
-                    &name,
-                ));
+                return Err(err(ErrorKind::InvalidLabelNameForMetric {
+                    family: name
+                        .as_ref()
+                        .map(|n| n.decoded.to_string())
+                        .unwrap_or_default(),
+                }));
             }
             lx.skip_blanks_if_current_blank();
             if lx.cur != Some(b'=') {
                 if started_with_brace {
                     if name_inside {
-                        return Err(LexError::for_family(
-                            ErrorKind::MultipleMetricNames {
-                                family: name.as_ref().unwrap().decoded.to_string(),
-                            },
-                            name.as_ref().unwrap(),
-                        ));
+                        return Err(LexError::new(ErrorKind::MultipleMetricNames {
+                            family: name.as_ref().unwrap().decoded.to_string(),
+                        }));
                     }
                     match lx.cur {
                         Some(b',') => {
                             check_metric_name_scheme(&label_name.decoded, scheme)
-                                .map_err(LexError::bare)?;
+                                .map_err(LexError::new)?;
                             name = Some(label_name);
                             name_inside = true;
                             continue;
                         }
                         Some(b'}') => {
                             check_metric_name_scheme(&label_name.decoded, scheme)
-                                .map_err(LexError::bare)?;
+                                .map_err(LexError::new)?;
                             name = Some(label_name);
                             lx.skip_blanks();
                             break;
                         }
                         _ => {
-                            return Err(err(
-                                ErrorKind::UnexpectedEndOfMetricName {
-                                    got: lx.cur.unwrap_or(b'\n'),
-                                },
-                                &name,
-                            ));
+                            return Err(err(ErrorKind::UnexpectedEndOfMetricName {
+                                got: lx.cur.unwrap_or(b'\n'),
+                            }));
                         }
                     }
                 }
-                return Err(err(
-                    ErrorKind::ExpectedEqAfterLabelName {
-                        got: lx.cur.unwrap_or(b'\n'),
-                    },
-                    &name,
-                ));
+                return Err(err(ErrorKind::ExpectedEqAfterLabelName {
+                    got: lx.cur.unwrap_or(b'\n'),
+                }));
             }
             lx.skip_blanks();
             let got = lx.cur;
             if got != Some(b'"') {
-                return Err(err(
-                    ErrorKind::ExpectedQuoteAtLabelValueStart {
-                        got: got.unwrap_or(b'\n'),
-                    },
-                    &name,
-                ));
+                return Err(err(ErrorKind::ExpectedQuoteAtLabelValueStart {
+                    got: got.unwrap_or(b'\n'),
+                }));
             }
-            let label_value = lx.read_label_value(scratch).map_err(|e| err(e, &name))?;
-            check_escape(&label_value, scheme).map_err(|e| err(e, &name))?;
+            let label_value = lx.read_label_value(scratch).map_err(err)?;
+            check_escape(&label_value, scheme).map_err(err)?;
             lx.skip_blanks();
             match lx.cur {
                 Some(b',') => {
@@ -737,22 +705,19 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
                     break;
                 }
                 _ => {
-                    return Err(err(
-                        ErrorKind::UnexpectedEndOfLabelValue {
-                            value: label_value.decoded.to_string(),
-                        },
-                        &name,
-                    ));
+                    return Err(err(ErrorKind::UnexpectedEndOfLabelValue {
+                        value: label_value.decoded.to_string(),
+                    }));
                 }
             }
         }
     }
     let name = match name {
         Some(n) => n,
-        None => return Err(LexError::bare(ErrorKind::InvalidMetricName)),
+        None => return Err(LexError::new(ErrorKind::InvalidMetricName)),
     };
     let raw_value = lx.read_token_until_whitespace();
-    let value = parse_sample_value(raw_value).map_err(|e| LexError::for_family(e, &name))?;
+    let value = parse_sample_value(raw_value).map_err(LexError::new)?;
     let mut timestamp_raw = None;
     if lx.cur.is_some() {
         lx.skip_blanks();
@@ -760,12 +725,9 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
         let ts = match std::str::from_utf8(raw_ts) {
             Ok(s) => s,
             Err(_) => {
-                return Err(LexError::for_family(
-                    ErrorKind::ExpectedTimestamp {
-                        got: String::from_utf8_lossy(raw_ts).into_owned(),
-                    },
-                    &name,
-                ));
+                return Err(LexError::new(ErrorKind::ExpectedTimestamp {
+                    got: String::from_utf8_lossy(raw_ts).into_owned(),
+                }));
             }
         };
         timestamp_raw = Some(lx.stage.place(ts));
@@ -784,12 +746,9 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
             } else {
                 spurious.to_vec()
             };
-            return Err(LexError::for_family(
-                ErrorKind::SpuriousAfterTimestamp {
-                    got: String::from_utf8_lossy(&got).into_owned(),
-                },
-                &name,
-            ));
+            return Err(LexError::new(ErrorKind::SpuriousAfterTimestamp {
+                got: String::from_utf8_lossy(&got).into_owned(),
+            }));
         }
     }
     Ok(LineView::Sample(SampleLine {

@@ -14,6 +14,7 @@ Fixed:
 - fix: reject spurious blank in strict mode
 - fix: validate every le & quantile label
 - fix: skip histogram & summary lines with illegal le/quantile label
+- fix: skip illegal lines in lenient mode
 
 ## [0.2.1] - 2026-11-26
 Fixed:

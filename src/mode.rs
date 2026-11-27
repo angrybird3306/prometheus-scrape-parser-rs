@@ -54,7 +54,7 @@ pub trait Mode: Send {
 /// unchecked; escapes are kept verbatim. A row that cannot fold into its
 /// family's type — an unparseable `quantile`/`le` label value, a negative
 /// count — is dropped whole with the error recorded: malformed values
-/// never enter the output.
+/// never enter the output, and the family's earlier rows survive.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LenientMode;
 
@@ -64,7 +64,7 @@ impl Mode for LenientMode {
     }
 
     fn disposition(&self) -> Disposition {
-        Disposition::SkipFamily
+        Disposition::SkipLine
     }
 }
 

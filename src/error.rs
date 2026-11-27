@@ -262,6 +262,7 @@ pub(crate) fn go_quote(bytes: &[u8]) -> String {
 pub enum Disposition {
     /// Abort the whole parse with the error (StrictMode).
     Abort,
-    /// Skip the offending family and keep parsing (LenientMode).
-    SkipFamily,
+    /// Drop the offending line, record the error, and keep parsing
+    /// (LenientMode).
+    SkipLine,
 }

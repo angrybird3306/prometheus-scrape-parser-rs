@@ -27,20 +27,9 @@ use crate::mode::{Mode, Scheme};
 use crate::model::{Label, MetricFamily};
 use crate::search::find_byte;
 
-fn record_skip(
-    stats: &mut Stats,
-    asm: &mut Assembler<'_>,
-    line: u64,
-    kind: ErrorKind,
-    family: Option<String>,
-) {
+fn record_skip(stats: &mut Stats, line: u64, kind: ErrorKind) {
     stats.skipped_lines += 1;
     stats.last_error = Some(Error { line, kind });
-    if let Some(raw) = family {
-        let resolved = asm.family_name(&raw);
-        asm.drop_family(resolved);
-        stats.skipped_families += 1;
-    }
 }
 
 /// Names the family the staged cut line folds into, without folding it.
@@ -301,13 +290,7 @@ impl<'a, M: Mode> TextParser<'a, M> {
                     return false;
                 }
                 self.labels.clear();
-                record_skip(
-                    &mut self.stats,
-                    &mut self.assembler,
-                    self.line_no,
-                    e.kind,
-                    e.family,
-                );
+                record_skip(&mut self.stats, self.line_no, e.kind);
                 return true;
             }
         };
@@ -345,13 +328,7 @@ impl<'a, M: Mode> TextParser<'a, M> {
                     // Recycle the leftover labels buffer for the next line.
                     self.labels = std::mem::take(&mut s.labels);
                     self.labels.clear();
-                    record_skip(
-                        &mut self.stats,
-                        &mut self.assembler,
-                        self.line_no,
-                        kind,
-                        None,
-                    );
+                    record_skip(&mut self.stats, self.line_no, kind);
                 }
             }
         }
