@@ -52,15 +52,18 @@ use common::scenarios::{
     ERROR_SCENARIO_38_INPUT, ERROR_SCENARIO_39_INPUT, ERROR_SCENARIO_40_INPUT,
     ERROR_SCENARIO_41_INPUT, ERROR_SCENARIO_42_INPUT, ERROR_SCENARIO_43_INPUT,
     ERROR_SCENARIO_44_INPUT, ERROR_SCENARIO_45_INPUT, ERROR_SCENARIO_46_INPUT,
-    ERROR_SCENARIO_47_INPUT, HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT,
-    HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT, HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT, SCENARIO_0_INPUT,
-    SCENARIO_1_INPUT, SCENARIO_2_INPUT, SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT,
-    SCENARIO_6_INPUT, SCENARIO_7_INPUT, SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT,
-    SCENARIO_11_INPUT, SCENARIO_12_INPUT, SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT,
-    SCENARIO_16_INPUT, SCENARIO_17_INPUT, STRICT_ABORT_PARTIAL_INPUT,
-    SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_INPUT,
-    SUMMARY_FRACTIONAL_COUNT_INPUT, SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT,
-    SUMMARY_NEGATIVE_COUNT_INPUT, SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
+    ERROR_SCENARIO_47_INPUT, HISTOGRAM_BUCKET_ABOVE_U64_RANGE_INPUT,
+    HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT, HISTOGRAM_COUNT_ABOVE_U64_RANGE_INPUT,
+    HISTOGRAM_COUNT_ABOVE_U64_RANGE_NORMALIZES_INPUT,
+    HISTOGRAM_COUNT_BELOW_U64_RANGE_BOUNDARY_INPUT, HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT,
+    HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT, SCENARIO_0_INPUT, SCENARIO_1_INPUT, SCENARIO_2_INPUT,
+    SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT, SCENARIO_6_INPUT, SCENARIO_7_INPUT,
+    SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT, SCENARIO_11_INPUT, SCENARIO_12_INPUT,
+    SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT, SCENARIO_16_INPUT, SCENARIO_17_INPUT,
+    STRICT_ABORT_PARTIAL_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT,
+    SUMMARY_COUNT_SUFFIX_FAMILY_INPUT, SUMMARY_FRACTIONAL_COUNT_INPUT,
+    SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT, SUMMARY_NEGATIVE_COUNT_INPUT,
+    SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
 };
 
 use common::{TestMode, modes, parse, parse_strict};
@@ -1397,6 +1400,93 @@ fn histogram_on_bucket_suffixed_family_name_should_keep_its_bucket_row_in_every_
                 None,
                 None,
                 vec![(1.0, IntOrFloat::Int(2))],
+            )],
+        )],
+    );
+}
+
+// ================== histogram counters above the u64 range ==================
+// Go's uint64(value) cast-back on amd64 fails for every float at or above
+// 2^64, so such counts and buckets land float — and one float counter
+// normalizes the whole histogram row to float.
+
+#[test]
+fn histogram_on_count_above_the_u64_range_should_pass_with_float_count_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        HISTOGRAM_COUNT_ABOVE_U64_RANGE_INPUT,
+        vec![family(
+            "h",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                Some(IntOrFloat::Float(18446744073709551616.0)),
+                Some(1.5),
+                vec![],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn histogram_on_bucket_above_the_u64_range_should_pass_with_float_bucket_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        HISTOGRAM_BUCKET_ABOVE_U64_RANGE_INPUT,
+        vec![family(
+            "h",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                None,
+                None,
+                vec![(f64::INFINITY, IntOrFloat::Float(18446744073709551616.0))],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn histogram_on_count_above_the_u64_range_should_pass_with_every_counter_float_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        HISTOGRAM_COUNT_ABOVE_U64_RANGE_NORMALIZES_INPUT,
+        vec![family(
+            "h",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                Some(IntOrFloat::Float(18446744073709551616.0)),
+                Some(2.0),
+                vec![
+                    (1.0, IntOrFloat::Float(1.0)),
+                    (f64::INFINITY, IntOrFloat::Float(1.0)),
+                ],
+            )],
+        )],
+    );
+}
+
+// Control: the largest f64-exact integer below 2^64 (the ulp there is 2048)
+// is a genuine u64 and stays int. u64::MAX's decimal spelling cannot play
+// this role: parsed to f64 it rounds up to 2^64 itself.
+#[test]
+fn histogram_on_count_below_the_u64_range_boundary_should_pass_with_int_count_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        HISTOGRAM_COUNT_BELOW_U64_RANGE_BOUNDARY_INPUT,
+        vec![family(
+            "h",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                Some(IntOrFloat::Int(18446744073709549568)),
+                Some(1.5),
+                vec![],
             )],
         )],
     );

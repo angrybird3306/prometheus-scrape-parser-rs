@@ -426,6 +426,27 @@ pub const HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT: &str = r#"# TYPE x_bucket histog
 x_bucket{le="1"} 2
 "#;
 
+pub const HISTOGRAM_COUNT_ABOVE_U64_RANGE_INPUT: &str = r#"# TYPE h histogram
+h_count 18446744073709551616
+h_sum 1.5
+"#;
+
+pub const HISTOGRAM_BUCKET_ABOVE_U64_RANGE_INPUT: &str = r#"# TYPE h histogram
+h_bucket{le="+Inf"} 18446744073709551616
+"#;
+
+pub const HISTOGRAM_COUNT_ABOVE_U64_RANGE_NORMALIZES_INPUT: &str = r#"# TYPE h histogram
+h_bucket{le="1"} 1
+h_bucket{le="+Inf"} 1
+h_count 18446744073709551616
+h_sum 2
+"#;
+
+pub const HISTOGRAM_COUNT_BELOW_U64_RANGE_BOUNDARY_INPUT: &str = r#"# TYPE h histogram
+h_count 18446744073709549568
+h_sum 1.5
+"#;
+
 /// Every scenario payload with a short label for assertion messages.
 pub fn scenario_inputs() -> Vec<(&'static str, &'static [u8])> {
     vec![
