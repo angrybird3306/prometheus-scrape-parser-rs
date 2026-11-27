@@ -29,13 +29,6 @@ pub trait Mode: Send {
     fn check(&mut self, line: &mut LineView<'_>, line_no: u64) -> Result<(), Error>;
     fn disposition(&self) -> Disposition;
 
-    /// Whether a content-bearing final input line without trailing `\n` is a
-    /// truncation error. Blank-only partial lines always end cleanly
-    /// (mirroring Go, where EOF hit at the start of a line is not an error).
-    fn rejects_partial_last_line(&self) -> bool {
-        false
-    }
-
     /// Name-validation scheme woven into lexing at Go's setOrCreateCurrentMF
     /// positions, so an invalid metric name preempts later same-line errors
     /// exactly like Go's reading order. `None` performs no name validation.
@@ -221,10 +214,6 @@ impl Mode for StrictMode {
 
     fn disposition(&self) -> Disposition {
         Disposition::Abort
-    }
-
-    fn rejects_partial_last_line(&self) -> bool {
-        true
     }
 
     fn name_scheme(&self) -> Option<Scheme> {

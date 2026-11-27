@@ -101,11 +101,10 @@ impl<M: Mode> Parser<M> {
     /// stream, capacities kept, [`stats`](Self::stats) keeping the final
     /// totals.
     ///
-    /// `Err` reports an unclean end: a tail the mode rejects as truncated,
-    /// a tail erroring under the fold (its own error then owns the end),
-    /// or a staged proto partial message. A lenient tolerated tail ends
-    /// `Ok`, its leftovers counted in stats. The finalized totals can be
-    /// cleared with [`reset_stats`](Self::reset_stats).
+    /// `Err` reports an unclean end: a truncated tail, a tail erroring
+    /// under the fold (its own error then owns the end), or a staged proto
+    /// partial message. The finalized totals can be cleared with
+    /// [`reset_stats`](Self::reset_stats).
     pub fn reset(&mut self) -> Result<(), Error> {
         let mut out = Ok(());
 

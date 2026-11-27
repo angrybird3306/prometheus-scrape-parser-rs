@@ -825,7 +825,13 @@ fn parser_reset_should_fold_the_carried_aggregation_tail() {
     // The histogram's rows fold into one model Metric, tail row included.
     assert_eq!(stats.metrics_total, 1);
     assert_eq!(stats.discarded_families, 1);
-    assert_eq!(stats.last_error, None);
+    assert_eq!(
+        stats.last_error,
+        Some(Error {
+            line: 4,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     assert!(!parser.is_waiting());
 }
 

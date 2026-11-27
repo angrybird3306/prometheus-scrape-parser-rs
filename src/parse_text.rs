@@ -165,10 +165,7 @@ impl<'a, M: Mode> TextParser<'a, M> {
                 // A residual line that itself errors (strict abort included)
                 // owns the final error; only a cleanly folded partial last
                 // line reports the truncation.
-                if self.fold_line(&staged, false, StageOwned)
-                    && !self.last_blank
-                    && self.mode.rejects_partial_last_line()
-                {
+                if self.fold_line(&staged, false, StageOwned) && !self.last_blank {
                     self.stats.last_error = Some(Error {
                         line: self.line_no,
                         kind: ErrorKind::UnexpectedEof,

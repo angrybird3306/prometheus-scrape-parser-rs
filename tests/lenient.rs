@@ -72,6 +72,7 @@ fn lenient_error_case_0_no_new_line_at_end_of_input_should_record_truncation_err
 // The full scenario-0 input: the truncation reports at its own line number,
 // after both complete families have folded.
 #[test]
+#[allow(clippy::approx_constant)] // the input carries the literal 3.14, not pi
 fn lenient_error_case_0_truncated_after_complete_family_should_record_truncation_error() {
     let (got, stats) = parse(ERROR_SCENARIO_0_INPUT.as_bytes(), TestMode::Lenient);
     assert_eq!(got.len(), 2);

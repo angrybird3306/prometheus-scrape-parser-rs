@@ -15,6 +15,7 @@ Fixed:
 - fix: validate every le & quantile label
 - fix: skip histogram & summary lines with illegal le/quantile label
 - fix: skip illegal lines in lenient mode
+- fix: fail on truncated final line in lenient mode
 
 ## [0.2.1] - 2026-11-26
 Fixed:
