@@ -159,12 +159,15 @@ fn histogram_count(value: f64) -> Result<IntOrFloat, ()> {
     if value < 0.0 {
         return Err(());
     }
-    let uv = value as u64;
-    if uv as f64 == value {
-        Ok(IntOrFloat::Int(uv))
-    } else {
-        Ok(IntOrFloat::Float(value))
+    // Go's amd64 uint64(value) round-trip fails for every float at or above
+    // 2^64, so they land float, not a saturated cast.
+    if value < 18446744073709551616.0 {
+        let uv = value as u64;
+        if uv as f64 == value {
+            return Ok(IntOrFloat::Int(uv));
+        }
     }
+    Ok(IntOrFloat::Float(value))
 }
 
 /// Whether a stripped label set names the same aggregation row as an

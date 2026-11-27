@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Fixed:
 - fix: a chunk that completes no line split the aggregation family carried across it into fragments and dropped the last one at reset
 - fix: parsing histogram & summary should match with name pattern strictly
+- fix: histogram count f64 overflow can be cast back
 
 ## [0.2.1] - 2026-11-26
 Fixed:
