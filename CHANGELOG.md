@@ -10,6 +10,8 @@ Fixed:
 - fix: a chunk that completes no line split the aggregation family carried across it into fragments and dropped the last one at reset
 - fix: parsing histogram & summary should match with name pattern strictly
 - fix: histogram count f64 overflow can be cast back
+- fix: make sure summary count parse like golang expfmt
+- fix: reject spurious blank in strict mode
 
 ## [0.2.1] - 2026-11-26
 Fixed:

@@ -454,6 +454,8 @@ fn is_label_name_start(b: u8) -> bool {
 /// by the end of input; `scheme` validates metric names at the positions
 /// Go's setOrCreateCurrentMF runs at. `stage` decides the provenance of the
 /// decoded text (borrow the line verbatim, or detach it as owned text).
+/// `strict` runs Go's spurious-text-after-timestamp check; lenient only
+/// rejects leftover tokens past the timestamp.
 pub(crate) fn lex_line<'a, 'l, S: Stage<'a, 'l>>(
     line: &'a [u8],
     eol_is_newline: bool,
@@ -461,14 +463,15 @@ pub(crate) fn lex_line<'a, 'l, S: Stage<'a, 'l>>(
     labels: &mut Vec<Label<'l>>,
     scratch: &mut Vec<u8>,
     stage: S,
+    strict: bool,
 ) -> Result<LineView<'l>, LexError> {
     let mut lx = Lexer::new(line, eol_is_newline, stage);
     lx.skip_blanks();
     match lx.cur {
         None => Ok(LineView::Blank),
         Some(b'#') => lex_comment(&mut lx, scheme, scratch),
-        Some(b'{') => lex_sample(&mut lx, true, scheme, labels, scratch),
-        Some(_) => lex_sample(&mut lx, false, scheme, labels, scratch),
+        Some(b'{') => lex_sample(&mut lx, true, scheme, labels, scratch, strict),
+        Some(_) => lex_sample(&mut lx, false, scheme, labels, scratch, strict),
     }
 }
 
@@ -618,6 +621,7 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
     scheme: Option<Scheme>,
     labels: &mut Vec<Label<'l>>,
     scratch: &mut Vec<u8>,
+    strict: bool,
 ) -> Result<LineView<'l>, LexError> {
     let mut name: Option<Token<'l>> = None;
     let mut name_inside = false;
@@ -765,11 +769,24 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
             }
         };
         timestamp_raw = Some(lx.stage.place(ts));
-        let rest = &lx.line[lx.pos..];
-        if !rest.is_empty() {
+        let (spurious, non_empty) = if strict && lx.cur.is_some() {
+            // Go's spurious text starts at the blank that ended the token,
+            // and its backslashes are dropped along the way.
+            let rest = lx.rest_from_current();
+            (rest, rest.iter().any(|&b| b != b'\\'))
+        } else {
+            let rest = &lx.line[lx.pos..];
+            (rest, !rest.is_empty())
+        };
+        if non_empty {
+            let got: Vec<u8> = if strict {
+                spurious.iter().copied().filter(|&b| b != b'\\').collect()
+            } else {
+                spurious.to_vec()
+            };
             return Err(LexError::for_family(
                 ErrorKind::SpuriousAfterTimestamp {
-                    got: String::from_utf8_lossy(rest).into_owned(),
+                    got: String::from_utf8_lossy(&got).into_owned(),
                 },
                 &name,
             ));

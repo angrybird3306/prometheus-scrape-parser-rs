@@ -282,6 +282,7 @@ impl<'a, M: Mode> TextParser<'a, M> {
             &mut self.labels,
             &mut self.scratch,
             stage,
+            strict,
         );
         // A blank or comment line touches no family: an instance folding
         // only those leaves the carried family where it is.
