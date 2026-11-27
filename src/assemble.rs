@@ -62,6 +62,18 @@ fn is_bucket(name: &str) -> bool {
     name.len() > 7 && name.ends_with("_bucket")
 }
 
+/// Go sets the summary/histogram count/sum flags only through the suffix
+/// resolution path: the name is the family name plus the suffix. An exact
+/// family-name hit leaves the flags false, so the bare rows of a
+/// suffix-named family fold by their quantile/le label instead.
+fn is_family_count(family: &str, name: &str) -> bool {
+    is_count(name) && &name[..name.len() - 6] == family
+}
+
+fn is_family_sum(family: &str, name: &str) -> bool {
+    is_sum(name) && &name[..name.len() - 4] == family
+}
+
 fn summary_parent(name: &str) -> Option<&str> {
     if is_count(name) {
         Some(&name[..name.len() - 6])
@@ -563,7 +575,10 @@ impl<'a> Assembler<'a> {
                 }
             }
         };
-        if is_count(&sample.name.decoded) {
+        let family_name = &self.pending_metric_families[idx].name;
+        let count_row = is_family_count(family_name, &sample.name.decoded);
+        let sum_row = is_family_sum(family_name, &sample.name.decoded);
+        if count_row {
             if sample.value < 0.0 {
                 return Err(ErrorKind::NegativeSummaryCount {
                     family: self.pending_metric_families[idx].name.to_string(),
@@ -575,7 +590,7 @@ impl<'a> Assembler<'a> {
                 unreachable!("row created as Summary");
             };
             summary.sample_count = Some(count_as_u64(sample.value));
-        } else if is_sum(&sample.name.decoded) {
+        } else if sum_row {
             let MetricValue::Summary(summary) =
                 &mut self.pending_metric_families[idx].metrics[row_idx].value
             else {
@@ -648,7 +663,10 @@ impl<'a> Assembler<'a> {
                 }
             }
         };
-        if is_count(&sample.name.decoded) {
+        let family_name = &self.pending_metric_families[idx].name;
+        let count_row = is_family_count(family_name, &sample.name.decoded);
+        let sum_row = is_family_sum(family_name, &sample.name.decoded);
+        if count_row {
             let count =
                 histogram_count(sample.value).map_err(|()| ErrorKind::NegativeHistogramCount {
                     family: self.pending_metric_families[idx].name.to_string(),
@@ -659,7 +677,7 @@ impl<'a> Assembler<'a> {
                 unreachable!("row created as Histogram");
             };
             hist.sample_count = Some(count);
-        } else if is_sum(&sample.name.decoded) {
+        } else if sum_row {
             let MetricValue::Histogram(hist) =
                 &mut self.pending_metric_families[idx].metrics[row_idx].value
             else {
