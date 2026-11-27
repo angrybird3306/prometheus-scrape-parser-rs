@@ -485,6 +485,22 @@ pub const SPURIOUS_TRAILING_TWO_BLANKS_INPUT: &str = "m 1 5  \n";
 
 pub const SPURIOUS_TABS_EVERYWHERE_INPUT: &str = "\tm\t1\t2\t\n";
 
+pub const BAD_LE_THEN_GOOD_LE_INPUT: &str = r#"# TYPE h histogram
+h_bucket{le="bla",le="1"} 2
+"#;
+
+pub const GOOD_LE_THEN_BAD_LE_INPUT: &str = r#"# TYPE h histogram
+h_bucket{le="1",le="bla"} 2
+"#;
+
+pub const BAD_QUANTILE_THEN_GOOD_QUANTILE_INPUT: &str = r#"# TYPE s summary
+s{quantile="bla",quantile="0.5"} 1
+"#;
+
+pub const DUPLICATE_VALID_LE_INPUT: &str = r#"# TYPE h histogram
+h_bucket{le="0.5",le="+Inf"} 2
+"#;
+
 /// Every scenario payload with a short label for assertion messages.
 pub fn scenario_inputs() -> Vec<(&'static str, &'static [u8])> {
     vec![

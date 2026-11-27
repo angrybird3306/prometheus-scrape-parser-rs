@@ -37,6 +37,7 @@ use std::borrow::Cow;
 mod common;
 
 use common::scenarios::{
+    BAD_LE_THEN_GOOD_LE_INPUT, BAD_QUANTILE_THEN_GOOD_QUANTILE_INPUT, DUPLICATE_VALID_LE_INPUT,
     ERROR_SCENARIO_0_INPUT, ERROR_SCENARIO_1_INPUT, ERROR_SCENARIO_2_INPUT, ERROR_SCENARIO_3_INPUT,
     ERROR_SCENARIO_4_INPUT, ERROR_SCENARIO_5_INPUT, ERROR_SCENARIO_6_INPUT, ERROR_SCENARIO_7_INPUT,
     ERROR_SCENARIO_8_INPUT, ERROR_SCENARIO_9_INPUT, ERROR_SCENARIO_10_INPUT,
@@ -52,7 +53,7 @@ use common::scenarios::{
     ERROR_SCENARIO_38_INPUT, ERROR_SCENARIO_39_INPUT, ERROR_SCENARIO_40_INPUT,
     ERROR_SCENARIO_41_INPUT, ERROR_SCENARIO_42_INPUT, ERROR_SCENARIO_43_INPUT,
     ERROR_SCENARIO_44_INPUT, ERROR_SCENARIO_45_INPUT, ERROR_SCENARIO_46_INPUT,
-    ERROR_SCENARIO_47_INPUT, HISTOGRAM_BUCKET_ABOVE_U64_RANGE_INPUT,
+    ERROR_SCENARIO_47_INPUT, GOOD_LE_THEN_BAD_LE_INPUT, HISTOGRAM_BUCKET_ABOVE_U64_RANGE_INPUT,
     HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT, HISTOGRAM_COUNT_ABOVE_U64_RANGE_INPUT,
     HISTOGRAM_COUNT_ABOVE_U64_RANGE_NORMALIZES_INPUT,
     HISTOGRAM_COUNT_BELOW_U64_RANGE_BOUNDARY_INPUT, HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT,
@@ -1669,5 +1670,58 @@ fn lenient_ts_trailing_blank_should_pass_with_timestamp_parsed() {
             None,
             vec![metric(vec![], 1.0, Some(5))],
         )]
+    );
+}
+
+// ==================== every le/quantile label is validated ==================
+// Go parses each quantile/le label value as it reads it, so an invalid one
+// errors no matter whether a later duplicate is valid; duplicates
+// themselves go unchecked and the last valid one wins.
+
+#[test]
+fn strict_bad_le_then_good_le_should_fail_with_error_expected_float_as_value_for_le_label() {
+    assert_error_scenario(
+        BAD_LE_THEN_GOOD_LE_INPUT,
+        "text format parsing error in line 2: expected float as value for 'le' label, got \"bla\"",
+        "",
+    );
+}
+
+#[test]
+fn strict_good_le_then_bad_le_should_fail_with_error_expected_float_as_value_for_le_label() {
+    assert_error_scenario(
+        GOOD_LE_THEN_BAD_LE_INPUT,
+        "text format parsing error in line 2: expected float as value for 'le' label, got \"bla\"",
+        "",
+    );
+}
+
+#[test]
+fn strict_bad_quantile_then_good_quantile_should_fail_with_error_expected_float_as_value_for_quantile_label()
+ {
+    assert_error_scenario(
+        BAD_QUANTILE_THEN_GOOD_QUANTILE_INPUT,
+        "text format parsing error in line 2: expected float as value for 'quantile' label, got \"bla\"",
+        "",
+    );
+}
+
+// Control: duplicated valid le labels stay unchecked, the last one wins.
+#[test]
+fn duplicate_valid_le_last_one_wins_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        DUPLICATE_VALID_LE_INPUT,
+        vec![family(
+            "h",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                None,
+                None,
+                vec![(f64::INFINITY, IntOrFloat::Int(2))],
+            )],
+        )],
     );
 }
