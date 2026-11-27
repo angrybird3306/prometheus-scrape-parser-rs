@@ -103,6 +103,11 @@ pub enum ErrorKind {
     /// Invalid UTF-8 in a name token. Label-value UTF-8 errors use
     /// [`ErrorKind::InvalidLabelValueUtf8`] instead.
     InvalidUtf8 { context: &'static str },
+    /// `invalid metric name %q` for a name token carrying invalid UTF-8;
+    /// the offending bytes are quoted Go-style.
+    InvalidMetricNameUtf8 { got: Vec<u8> },
+    /// `invalid label name %q` likewise.
+    InvalidLabelNameUtf8 { got: Vec<u8> },
     /// `unexpected end of input stream`.
     UnexpectedEof,
     /// Invalid wire format in a protobuf exposition message; `got` carries
@@ -148,6 +153,12 @@ impl fmt::Display for ErrorKind {
             }
             ErrorKind::InvalidLabelValueUtf8 { value } => {
                 write!(f, "invalid label value {}", go_quote(value))
+            }
+            ErrorKind::InvalidMetricNameUtf8 { got } => {
+                write!(f, "invalid metric name {}", go_quote(got))
+            }
+            ErrorKind::InvalidLabelNameUtf8 { got } => {
+                write!(f, "invalid label name {}", go_quote(got))
             }
             ErrorKind::MultipleMetricNames { family } => {
                 write!(f, "multiple metric names for metric {family:?}")

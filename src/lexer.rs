@@ -201,7 +201,16 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
     /// `readTokenAsLabelName`: quotes toggle in place (and may appear mid-name),
     /// escapes decode, unquoted names stop at ' ' (metric) or '=' (label).
     /// Unlike Go, bytes >= 0x80 continue a quoted name instead of ending it.
-    fn read_name(&mut self, metric: bool, scratch: &mut Vec<u8>) -> Result<Token<'l>, ErrorKind> {
+    /// `utf8_metric` classifies an invalid-UTF-8 failure: a metric-name
+    /// token reports `invalid metric name %q`, a label-name token
+    /// `invalid label name %q`. The first quoted token of a line-start
+    /// brace is read in label mode but reports as a metric name.
+    fn read_name(
+        &mut self,
+        metric: bool,
+        utf8_metric: bool,
+        scratch: &mut Vec<u8>,
+    ) -> Result<Token<'l>, ErrorKind> {
         scratch.clear();
         let is_start = match self.cur {
             Some(b) => is_label_name_start(b) || (metric && b == b':'),
@@ -220,7 +229,6 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
         let mut unknown: Option<u8> = None;
         let mut event_start = 0;
         let end;
-        let context = if metric { "metric name" } else { "label name" };
         loop {
             if escaped {
                 match self.cur {
@@ -286,16 +294,25 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
                 }
             };
             if !cont {
-                if self.cur.is_none() && quoted {
+                if self.cur.is_none() {
                     if self.eol_is_newline {
-                        let name = self.partial_name(start, verbatim, event_start, scratch);
-                        return Err(if metric {
-                            ErrorKind::NewlineInMetricName { name }
-                        } else {
-                            ErrorKind::NewlineInLabelName { name }
-                        });
+                        if escaped {
+                            // The splitter cut at the backslash: the newline
+                            // is the escape payload, and `\<newline>` is not
+                            // a valid escape sequence.
+                            return Err(ErrorKind::InvalidEscapeSequence { got: b'\n' });
+                        }
+                        if quoted {
+                            let name = self.partial_name(start, verbatim, event_start, scratch);
+                            return Err(if metric {
+                                ErrorKind::NewlineInMetricName { name }
+                            } else {
+                                ErrorKind::NewlineInLabelName { name }
+                            });
+                        }
+                    } else {
+                        return Err(ErrorKind::UnexpectedEof);
                     }
-                    return Err(ErrorKind::UnexpectedEof);
                 }
                 end = if self.cur.is_some() {
                     self.pos - 1
@@ -308,7 +325,17 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
         let decoded = if verbatim {
             match std::str::from_utf8(&self.line[start..end]) {
                 Ok(s) => self.stage.place(s),
-                Err(_) => return Err(ErrorKind::InvalidUtf8 { context }),
+                Err(_) => {
+                    return Err(if utf8_metric {
+                        ErrorKind::InvalidMetricNameUtf8 {
+                            got: self.line[start..end].to_vec(),
+                        }
+                    } else {
+                        ErrorKind::InvalidLabelNameUtf8 {
+                            got: self.line[start..end].to_vec(),
+                        }
+                    });
+                }
             }
         } else {
             let mut bytes = Vec::with_capacity(event_start - start + scratch.len());
@@ -316,7 +343,17 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
             bytes.append(scratch);
             match String::from_utf8(bytes) {
                 Ok(s) => Cow::Owned(s),
-                Err(_) => return Err(ErrorKind::InvalidUtf8 { context }),
+                Err(e) => {
+                    return Err(if utf8_metric {
+                        ErrorKind::InvalidMetricNameUtf8 {
+                            got: e.as_bytes().to_vec(),
+                        }
+                    } else {
+                        ErrorKind::InvalidLabelNameUtf8 {
+                            got: e.as_bytes().to_vec(),
+                        }
+                    });
+                }
             }
         };
         Ok(Token {
@@ -360,6 +397,9 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
             match self.cur {
                 None => {
                     if self.eol_is_newline {
+                        if escaped {
+                            return Err(ErrorKind::InvalidEscapeSequence { got: b'\n' });
+                        }
                         let bytes = if verbatim {
                             self.line[content_start..self.pos].to_vec()
                         } else {
@@ -491,7 +531,7 @@ pub(crate) fn probe_staged_family<'a, 'l, S: Stage<'a, 'l>>(
                 return None;
             }
             lx.skip_blanks();
-            let name = lx.read_name(true, scratch).ok()?;
+            let name = lx.read_name(true, true, scratch).ok()?;
             check_escape(&name, scheme).ok()?;
             if !matches!(lx.cur, Some(b' ') | Some(b'\t')) {
                 return None;
@@ -501,7 +541,7 @@ pub(crate) fn probe_staged_family<'a, 'l, S: Stage<'a, 'l>>(
         }
         Some(b'{') => {
             lx.skip_blanks();
-            let name = lx.read_name(false, scratch).ok()?;
+            let name = lx.read_name(false, false, scratch).ok()?;
             check_escape(&name, scheme).ok()?;
             if !matches!(lx.cur, Some(b',') | Some(b'}')) {
                 return None;
@@ -513,7 +553,7 @@ pub(crate) fn probe_staged_family<'a, 'l, S: Stage<'a, 'l>>(
             name
         }
         Some(_) => {
-            let name = lx.read_name(true, scratch).ok()?;
+            let name = lx.read_name(true, true, scratch).ok()?;
             check_escape(&name, scheme).ok()?;
             // A token ending at the prefix's own end does not fix the name:
             // `metric_na` may still grow into `metric_name`.
@@ -569,7 +609,7 @@ fn lex_comment<'a, 'l, S: Stage<'a, 'l>>(
     }
     let is_help = keyword == b"HELP";
     lx.skip_blanks();
-    let name = lx.read_name(true, scratch).map_err(LexError::new)?;
+    let name = lx.read_name(true, true, scratch).map_err(LexError::new)?;
     check_escape(&name, scheme).map_err(LexError::new)?;
     if lx.cur.is_none() {
         return Ok(LineView::Comment);
@@ -594,6 +634,11 @@ fn lex_comment<'a, 'l, S: Stage<'a, 'l>>(
         Ok(LineView::Help { name, text })
     } else {
         let raw = lx.rest_from_current();
+        // A truncated TYPE line cut the token mid-read: EOF, even when the
+        // bytes happen to spell a valid type.
+        if !lx.eol_is_newline {
+            return Err(LexError::new(ErrorKind::UnexpectedEof));
+        }
         match parse_metric_type(raw) {
             Some(metric_type) => Ok(LineView::Type { name, metric_type }),
             None => Err(LexError::new(ErrorKind::UnknownMetricType {
@@ -615,7 +660,7 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
     let mut name_inside = false;
     let err = |e: ErrorKind| LexError::new(e);
     if !started_with_brace {
-        let tok = lx.read_name(true, scratch).map_err(err)?;
+        let tok = lx.read_name(true, true, scratch).map_err(err)?;
         if tok.decoded.is_empty() {
             return Err(LexError::new(ErrorKind::InvalidMetricName));
         }
@@ -627,6 +672,9 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
     if lx.cur == Some(b'{') {
         loop {
             lx.skip_blanks();
+            if lx.cur.is_none() && !lx.eol_is_newline {
+                return Err(LexError::new(ErrorKind::UnexpectedEof));
+            }
             if lx.cur == Some(b'}') {
                 if name.is_none() {
                     return Err(LexError::new(ErrorKind::InvalidMetricName));
@@ -634,7 +682,10 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
                 lx.skip_blanks();
                 break;
             }
-            let label_name = lx.read_name(false, scratch).map_err(err)?;
+            // The first quoted token of a brace-start line is the metric
+            // name: its UTF-8 failure reports in metric-name wording.
+            let utf8_metric = started_with_brace && name.is_none() && !name_inside;
+            let label_name = lx.read_name(false, utf8_metric, scratch).map_err(err)?;
             check_escape(&label_name, scheme).map_err(err)?;
             if label_name.decoded.is_empty() {
                 return Err(err(ErrorKind::InvalidLabelNameForMetric {
@@ -680,6 +731,9 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
             }
             lx.skip_blanks();
             let got = lx.cur;
+            if got.is_none() && !lx.eol_is_newline {
+                return Err(LexError::new(ErrorKind::UnexpectedEof));
+            }
             if got != Some(b'"') {
                 return Err(err(ErrorKind::ExpectedQuoteAtLabelValueStart {
                     got: got.unwrap_or(b'\n'),
@@ -705,6 +759,12 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
                     break;
                 }
                 _ => {
+                    // The line cut off after a closed label value: EOF, not
+                    // a separator complaint. A newline-terminated line ends
+                    // the same way minus the flag and keeps Go's text.
+                    if lx.cur.is_none() && !lx.eol_is_newline {
+                        return Err(LexError::new(ErrorKind::UnexpectedEof));
+                    }
                     return Err(err(ErrorKind::UnexpectedEndOfLabelValue {
                         value: label_value.decoded.to_string(),
                     }));
@@ -717,11 +777,27 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
         None => return Err(LexError::new(ErrorKind::InvalidMetricName)),
     };
     let raw_value = lx.read_token_until_whitespace();
-    let value = parse_sample_value(raw_value).map_err(LexError::new)?;
+    let value = match parse_sample_value(raw_value) {
+        Ok(v) => v,
+        // A truncated line cuts the value mid-token: EOF, not the content
+        // error the cut bytes would produce. A parseable value defers to
+        // the fold — its label checks precede the value in Go's order —
+        // and the truncation reports at the end of the parse.
+        Err(_) if lx.cur.is_none() && !lx.eol_is_newline => {
+            return Err(LexError::new(ErrorKind::UnexpectedEof));
+        }
+        Err(e) => return Err(LexError::new(e)),
+    };
     let mut timestamp_raw = None;
     if lx.cur.is_some() {
         lx.skip_blanks();
+        if lx.cur.is_none() && !lx.eol_is_newline {
+            return Err(LexError::new(ErrorKind::UnexpectedEof));
+        }
         let raw_ts = lx.read_token_until_whitespace();
+        if lx.cur.is_none() && !lx.eol_is_newline {
+            return Err(LexError::new(ErrorKind::UnexpectedEof));
+        }
         let ts = match std::str::from_utf8(raw_ts) {
             Ok(s) => s,
             Err(_) => {

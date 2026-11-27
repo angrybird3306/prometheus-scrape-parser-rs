@@ -17,6 +17,9 @@ Fixed:
 - fix: skip illegal lines in lenient mode
 - fix: fail on truncated final line in lenient mode
 
+Added:
+- feat: more accurate error messages
+
 ## [0.2.1] - 2026-11-26
 Fixed:
 - fix: a summary/histogram family split across chunks is parsed as one
