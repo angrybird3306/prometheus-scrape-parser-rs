@@ -12,6 +12,8 @@ Fixed:
 - fix: histogram count f64 overflow can be cast back
 - fix: make sure summary count parse like golang expfmt
 - fix: reject spurious blank in strict mode
+- fix: validate every le & quantile label
+- fix: skip histogram & summary lines with illegal le/quantile label
 
 ## [0.2.1] - 2026-11-26
 Fixed:

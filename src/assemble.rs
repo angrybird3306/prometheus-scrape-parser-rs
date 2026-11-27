@@ -552,22 +552,9 @@ impl<'a> Assembler<'a> {
         let quantile = match bound {
             None => None,
             Some(Ok(q)) => Some(q),
-            Some(Err(got)) => {
-                if strict {
-                    return Err(ErrorKind::ExpectedQuantileFloat { got });
-                }
-                // Lenient keeps the whole line as a plain sample, labels intact.
-                let timestamp = resolve_timestamp(sample.timestamp_raw.as_deref(), strict)?;
-                self.created_metrics += 1;
-                self.pending_metric_families[idx].metrics.push(Metric {
-                    labels: std::mem::take(&mut sample.labels),
-                    timestamp,
-                    value: MetricValue::Sample(sample.value),
-                });
-                return Ok(());
-            }
+            Some(Err(got)) => return Err(ErrorKind::ExpectedQuantileFloat { got }),
         };
-        // Only aggregation rows merge; lenient fallback rows are plain samples.
+        // Only aggregation rows merge.
         let row_idx = {
             let fam = &mut self.pending_metric_families[idx];
             match fam.metrics.iter().position(|m| {
@@ -636,21 +623,9 @@ impl<'a> Assembler<'a> {
         let le = match bound {
             None => None,
             Some(Ok(l)) => Some(l),
-            Some(Err(got)) => {
-                if strict {
-                    return Err(ErrorKind::ExpectedLeFloat { got });
-                }
-                let timestamp = resolve_timestamp(sample.timestamp_raw.as_deref(), strict)?;
-                self.created_metrics += 1;
-                self.pending_metric_families[idx].metrics.push(Metric {
-                    labels: std::mem::take(&mut sample.labels),
-                    timestamp,
-                    value: MetricValue::Sample(sample.value),
-                });
-                return Ok(());
-            }
+            Some(Err(got)) => return Err(ErrorKind::ExpectedLeFloat { got }),
         };
-        // Only aggregation rows merge; lenient fallback rows are plain samples.
+        // Only aggregation rows merge.
         let row_idx = {
             let fam = &mut self.pending_metric_families[idx];
             match fam.metrics.iter().position(|m| {
