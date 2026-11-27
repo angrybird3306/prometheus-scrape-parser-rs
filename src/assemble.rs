@@ -227,9 +227,10 @@ fn duplicate_label_names(labels: &[Label<'_>]) -> bool {
 
 /// Partitions a sample's label set in place: regular labels keep their
 /// order packed at the front, special `quantile`/`le` entries are parsed
-/// into the bound (last one wins) and dropped. Returns the bound and the
-/// packed regular prefix, so row creation moves the original Vec without
-/// a second allocation.
+/// into the bound and dropped. Go validates every special label, so the
+/// first invalid value wins; otherwise the last valid one does. Returns
+/// the bound and the packed regular prefix, so row creation moves the
+/// original Vec without a second allocation.
 fn strip_special_labels<'a, 'v>(
     labels: &'v mut Vec<Label<'a>>,
     special: &str,
@@ -239,9 +240,12 @@ fn strip_special_labels<'a, 'v>(
     let mut read = 0;
     while read < labels.len() {
         if labels[read].name == special {
-            match parse_float_token(&labels[read].value) {
-                Ok(v) => bound = Some(Ok(v)),
-                Err(()) => bound = Some(Err(labels[read].value.to_string())),
+            let parsed = parse_float_token(&labels[read].value);
+            if bound.as_ref().is_none_or(|b| b.is_ok()) {
+                bound = Some(match parsed {
+                    Ok(v) => Ok(v),
+                    Err(()) => Err(labels[read].value.to_string()),
+                });
             }
         } else {
             labels.swap(write, read);
