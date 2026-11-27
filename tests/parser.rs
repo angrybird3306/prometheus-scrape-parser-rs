@@ -541,8 +541,8 @@ fn parser_lenient_skipped_lines_should_keep_the_sample_group_gathering() {
 }
 
 #[test]
-fn parser_lenient_lex_error_should_drop_the_family_without_a_fragment() {
-    // A lex error drops the whole family (lenient's whole-family skip): no
+fn parser_lenient_lex_error_should_drop_the_line_without_a_fragment() {
+    // A lex error drops the whole line (lenient's line-level skip): no
     // fragment yields and nothing stays held.
     let mut parser = Parser::new(LenientMode);
     let mut families = Vec::new();
@@ -554,7 +554,8 @@ fn parser_lenient_lex_error_should_drop_the_family_without_a_fragment() {
     assert_eq!(parser.reset(), Ok(()));
 
     let stats = parser.stats();
-    assert_eq!(stats.skipped_families, 1);
+    assert_eq!(stats.skipped_lines, 1);
+    assert_eq!(stats.skipped_families, 0);
     assert_eq!(stats.discarded_families, 0);
     assert_eq!(stats.metrics_total, 0);
 }

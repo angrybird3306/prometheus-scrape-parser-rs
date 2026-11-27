@@ -14,16 +14,18 @@
 // limitations under the License.
 
 //! LenientMode smoke tests: Go error scenarios that lenient parsing
-//! tolerates, plus the SkipFamily disposition. Where a Go error case has a
-//! direct counterpart, the test name carries its number like the success
-//! scenarios do. The superset property test pins lenient output to strict
-//! output wherever strict parsing succeeds.
+//! tolerates, plus the line-level skip disposition. Where a Go error case
+//! has a direct counterpart, the test name carries its number like the
+//! success scenarios do. The superset property test pins lenient output to
+//! strict output wherever strict parsing succeeds.
 
 mod common;
 
 use common::scenarios::scenario_inputs;
 use common::{TestMode, parse};
-use prometheus_scrape_parser_rs::{Bucket, ErrorKind, HistogramValue, IntOrFloat, MetricValue};
+use prometheus_scrape_parser_rs::{
+    Bucket, ErrorKind, HistogramValue, IntOrFloat, MetricType, MetricValue,
+};
 
 // Empty input yields no families.
 #[test]
@@ -94,13 +96,12 @@ good{b=\"2\"} 2
     assert_eq!(got[0].metrics[1].labels[0].name, "b");
     assert_eq!(stats.lines_total, 4);
     assert_eq!(stats.skipped_lines, 2);
-    assert_eq!(stats.skipped_families, 2);
+    assert_eq!(stats.skipped_families, 0);
 }
 
-// SkipFamily disposition: the erroring line drops the family it belongs to
-// (the `bad` family does not exist yet, so nothing is dropped), parsing
-// resumes on the next line, and same-name lines merge into one family with
-// the failure recorded in Stats.
+// A line whose value does not parse drops itself; parsing resumes on the
+// next line, and same-name lines merge into one family with the failure
+// recorded in Stats.
 #[test]
 fn lenient_on_invalid_float_line_should_skip_family() {
     let (got, stats) = parse(
@@ -117,14 +118,14 @@ good 2
     assert_eq!(got[0].metrics[1].value, MetricValue::Sample(2.0));
     assert_eq!(stats.lines_total, 3);
     assert_eq!(stats.skipped_lines, 1);
-    assert_eq!(stats.skipped_families, 1);
+    assert_eq!(stats.skipped_families, 0);
     let err = stats.last_error.as_ref().unwrap();
     assert_eq!(err.line, 2);
     assert!(matches!(err.kind, ErrorKind::ExpectedFloatValue { .. }));
 }
 
-// An error line whose family already holds data drops exactly that family;
-// unrelated families survive.
+// An error line whose family already holds data drops only the line —
+// the family keeps its good samples, and unrelated families survive.
 #[test]
 fn lenient_on_error_line_should_drop_only_its_own_family() {
     let (got, stats) = parse(
@@ -135,13 +136,15 @@ c 3
 ",
         TestMode::Lenient,
     );
-    assert_eq!(got.len(), 2);
+    assert_eq!(got.len(), 3);
     assert_eq!(got[0].name, "a");
     assert_eq!(got[0].metrics.len(), 1);
-    assert_eq!(got[1].name, "c");
+    assert_eq!(got[1].name, "b");
     assert_eq!(got[1].metrics.len(), 1);
+    assert_eq!(got[2].name, "c");
+    assert_eq!(got[2].metrics.len(), 1);
     assert_eq!(stats.skipped_lines, 1);
-    assert_eq!(stats.skipped_families, 1);
+    assert_eq!(stats.skipped_families, 0);
     let err = stats.last_error.as_ref().unwrap();
     assert_eq!(err.line, 3);
 }
@@ -204,4 +207,58 @@ h_bucket{le=\"+Inf\"} 7
     let err = stats.last_error.as_ref().unwrap();
     assert_eq!(err.line, 2);
     assert!(matches!(err.kind, ErrorKind::NegativeHistogramCount { .. }));
+}
+
+// ==================== the disposition is line-level =========================
+// Lenient rejects a bad line, not its family: a lex error in a line whose
+// family already holds good samples must not take those samples down with
+// it — the family, and its TYPE, survive.
+
+#[test]
+fn lenient_on_bad_value_should_drop_only_the_line_and_keep_the_family() {
+    let (got, stats) = parse(b"# TYPE m gauge\nm 1\nm xx\nm 2\n", TestMode::Lenient);
+    assert_eq!(stats.skipped_lines, 1);
+    assert_eq!(stats.skipped_families, 0);
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 3);
+    assert!(
+        matches!(err.kind, ErrorKind::ExpectedFloatValue { ref got } if got == "xx"),
+        "unexpected error kind {err}"
+    );
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "m");
+    assert_eq!(got[0].metric_type, MetricType::Gauge);
+    assert_eq!(got[0].metrics.len(), 2);
+    assert_eq!(got[0].metrics[0].value, MetricValue::Sample(1.0));
+    assert_eq!(got[0].metrics[1].value, MetricValue::Sample(2.0));
+}
+
+#[test]
+fn lenient_on_non_utf8_timestamp_should_drop_only_the_line_and_keep_the_family() {
+    let (got, stats) = parse(b"m 1\nm 1 \xff\nm 2\n", TestMode::Lenient);
+    assert_eq!(stats.skipped_lines, 1);
+    assert_eq!(stats.skipped_families, 0);
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 2);
+    assert!(matches!(err.kind, ErrorKind::ExpectedTimestamp { .. }));
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "m");
+    assert_eq!(got[0].metrics.len(), 2);
+    assert_eq!(got[0].metrics[0].value, MetricValue::Sample(1.0));
+    assert_eq!(got[0].metrics[1].value, MetricValue::Sample(2.0));
+}
+
+#[test]
+fn lenient_on_spurious_after_timestamp_should_drop_only_the_line_and_keep_the_family() {
+    let (got, stats) = parse(b"m 1 5\nm 1 5  \n", TestMode::Lenient);
+    assert_eq!(stats.skipped_lines, 1);
+    assert_eq!(stats.skipped_families, 0);
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 2);
+    assert!(matches!(err.kind, ErrorKind::SpuriousAfterTimestamp { .. }));
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "m");
+    assert_eq!(got[0].metrics.len(), 1);
+    assert_eq!(got[0].metrics[0].value, MetricValue::Sample(1.0));
+    assert_eq!(got[0].metrics[0].timestamp, Some(5));
 }
