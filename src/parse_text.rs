@@ -123,7 +123,6 @@ pub struct TextParser<'a, M: Mode> {
 
 impl<'a, M: Mode> TextParser<'a, M> {
     pub fn new(mut staging: StageArea, mode: M, input: &'a [u8]) -> Self {
-        let carried = staging.carried.take();
         let stats = std::mem::take(&mut staging.stats);
         let known = std::mem::take(&mut staging.known);
         let created = std::mem::take(&mut staging.created);
@@ -132,9 +131,6 @@ impl<'a, M: Mode> TextParser<'a, M> {
         let stopped = staging.stopped;
         let mut assembler = Assembler::default();
         assembler.restore_owned_memory(known, created, typed);
-        if let Some(carried) = carried {
-            assembler.restore_carried(carried);
-        }
         TextParser {
             mode,
             input_buf: input,
@@ -173,9 +169,7 @@ impl<'a, M: Mode> TextParser<'a, M> {
             self.finished = true;
         }
         if !self.stopped {
-            if let Some(carried) = self.staging.carried.take() {
-                self.assembler.restore_carried(carried);
-            }
+            self.restore_carried();
             if !self.staging.line.is_empty() {
                 let staged = std::mem::take(&mut self.staging.line);
                 self.saw_residual = true;
@@ -257,6 +251,16 @@ impl<'a, M: Mode> TextParser<'a, M> {
         self.flush_end(!self.stopped);
     }
 
+    /// Hands the family the previous instance carried in to the assembler,
+    /// once. The first line that can touch a family finds it in place; an
+    /// instance folding nothing, or only blank and comment lines, leaves it
+    /// in the stage untouched.
+    fn restore_carried(&mut self) {
+        if let Some(carried) = self.staging.carried.take() {
+            self.assembler.restore_carried(carried);
+        }
+    }
+
     /// Feeds one line through the fold pipeline, borrowed or owned by the
     /// stage. Returns false on a strict abort: folding stops, staged
     /// families still yield.
@@ -271,14 +275,20 @@ impl<'a, M: Mode> TextParser<'a, M> {
         self.line_no += 1;
         self.stats.lines_total += 1;
         self.last_blank = false;
-        let mut view = match lex_line(
+        let lexed = lex_line(
             line,
             eol_is_newline,
             scheme,
             &mut self.labels,
             &mut self.scratch,
             stage,
-        ) {
+        );
+        // A blank or comment line touches no family: an instance folding
+        // only those leaves the carried family where it is.
+        if !matches!(lexed, Ok(LineView::Blank | LineView::Comment)) {
+            self.restore_carried();
+        }
+        let mut view = match lexed {
             Ok(v) => v,
             Err(e) => {
                 if strict {

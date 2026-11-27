@@ -21,7 +21,7 @@ mod common;
 
 use common::{
     AGGREGATES, CROSS_FAMILY, TestMode, merge_by_name, merge_instances_by_name,
-    mid_row_cut_histogram, modes, owned, parse, parse_strict, sorted_by_name,
+    mid_row_cut_histogram, modes, owned, parse, parse_strict, rows_whole, sorted_by_name,
 };
 use prometheus_scrape_parser_rs::{
     Error, ErrorKind, IntOrFloat, LenientMode, MetricFamily, MetricFamilyView, MetricType,
@@ -348,30 +348,6 @@ fn multi_row_histogram() -> Vec<u8> {
         out.extend_from_slice(format!("h_count{{handler=\"{handler}\"}} 1\n").as_bytes());
     }
     out
-}
-
-/// Whether every yielded aggregation row carries its whole sample
-/// group; plain rows are whole as they are.
-fn rows_whole(families: &[MetricFamily<'_>]) -> bool {
-    families.iter().all(|family| match family.metric_type {
-        MetricType::Summary => family.metrics.iter().all(|metric| match &metric.value {
-            MetricValue::Summary(summary) => {
-                summary.sample_count.is_some() && summary.sample_sum.is_some()
-            }
-            _ => true,
-        }),
-        MetricType::Histogram | MetricType::GaugeHistogram => {
-            family.metrics.iter().all(|metric| match &metric.value {
-                MetricValue::Histogram(histogram) => {
-                    !histogram.buckets.is_empty()
-                        && histogram.sample_count.is_some()
-                        && histogram.sample_sum.is_some()
-                }
-                _ => true,
-            })
-        }
-        _ => true,
-    })
 }
 
 fn run_cut<'a>(payload: &'a [u8], cut: usize, mode: TestMode) -> (Vec<MetricFamily<'a>>, Stats) {

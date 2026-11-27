@@ -381,3 +381,27 @@ pub fn payloads() -> Vec<(&'static str, &'static [u8])> {
         ("empty", b""),
     ]
 }
+
+/// Whether every yielded aggregation row carries its whole sample
+/// group; plain rows are whole as they are.
+pub fn rows_whole(families: &[MetricFamily<'_>]) -> bool {
+    families.iter().all(|family| match family.metric_type {
+        MetricType::Summary => family.metrics.iter().all(|metric| match &metric.value {
+            MetricValue::Summary(summary) => {
+                summary.sample_count.is_some() && summary.sample_sum.is_some()
+            }
+            _ => true,
+        }),
+        MetricType::Histogram | MetricType::GaugeHistogram => {
+            family.metrics.iter().all(|metric| match &metric.value {
+                MetricValue::Histogram(histogram) => {
+                    !histogram.buckets.is_empty()
+                        && histogram.sample_count.is_some()
+                        && histogram.sample_sum.is_some()
+                }
+                _ => true,
+            })
+        }
+        _ => true,
+    })
+}
