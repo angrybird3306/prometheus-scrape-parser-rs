@@ -375,6 +375,67 @@ request_duration_microseconds_count 2693
 
 pub const ERROR_SCENARIO_47_INPUT: &str = r#"{} 3.14"#;
 
+// Multi-violation inputs: each breaks two rules whose errors Go and this
+// crate order differently. These pin the answers this crate reports today
+// (see the multi-violation section in scenarios.rs).
+pub const MULTI_RESERVED_BAD_VALUE_INPUT: &str = r#"m{__name__="x"} bad
+"#;
+
+pub const MULTI_DUP_LABEL_BAD_VALUE_INPUT: &str = r#"m{a="1",a="2"} bad
+"#;
+
+pub const MULTI_SECOND_HELP_BAD_ESCAPE_INPUT: &str = r#"# HELP m a
+# HELP m \t
+"#;
+
+pub const MULTI_SECOND_TYPE_BOGUS_INPUT: &str = r#"# TYPE m counter
+# TYPE m bogus
+"#;
+
+pub const MULTI_TYPE_AFTER_SAMPLES_BOGUS_INPUT: &str = r#"m 1
+# TYPE m bogus
+"#;
+
+pub const MULTI_SECOND_TYPE_SUFFIX_BOGUS_INPUT: &str = r#"# TYPE s summary
+s_count 1
+# TYPE s_count bogus
+"#;
+
+// Truncated-token inputs: EOF cuts the final line mid-token, so the honest
+// answer is "unexpected end of input stream", not the content error the cut
+// token would otherwise produce. The trailing guards keep complete-content
+// truncation and newline-terminated lines on their own answers.
+pub const EOF_NAME_BACKSLASH_INPUT: &[u8] = b"foo\\";
+pub const EOF_NAME_DOUBLE_BACKSLASH_INPUT: &[u8] = b"foo\\\\";
+pub const EOF_NAME_INPUT: &[u8] = b"foo";
+pub const EOF_NAME_SPACE_INPUT: &[u8] = b"foo ";
+pub const EOF_VALUE_SPACE_INPUT: &[u8] = b"foo 1 ";
+pub const EOF_QUOTED_NAME_INPUT: &[u8] = b"\"foo\"";
+pub const EOF_LABEL_VALUE_OPEN_INPUT: &[u8] = b"foo{a=\"b\"";
+pub const EOF_LABEL_EQ_INPUT: &[u8] = b"foo{a=";
+pub const EOF_BRACE_INPUT: &[u8] = b"foo{";
+pub const EOF_TYPE_BOGUS_INPUT: &[u8] = b"# TYPE f bogus";
+pub const EOF_VALUE_BRACE_SPACE_INPUT: &[u8] = b"foo{a=\"b\"} ";
+pub const EOF_QUOTED_NAME_SPACE_INPUT: &[u8] = b"\"foo\" ";
+pub const TRUNCATED_DUP_LABEL_INPUT: &[u8] = b"m{a=\"1\",a=\"2\"} 1";
+pub const NAME_BACKSLASH_SPACE_INPUT: &[u8] = b"foo\\ 1\n";
+pub const NAME_DOUBLE_BACKSLASH_SPACE_INPUT: &[u8] = b"foo\\\\bar 1\n";
+
+// Name tokens carrying invalid UTF-8: the errors quote the offending bytes.
+pub const UTF8_NAME_FF_INPUT: &[u8] = b"\"\xff\" 1\n";
+pub const UTF8_NAME_C3_INPUT: &[u8] = b"\"\xc3\" 1\n";
+pub const UTF8_HELP_NAME_C3_INPUT: &[u8] = b"# HELP \"\xc3\" h\n";
+pub const UTF8_BRACED_NAME_FF_FE_INPUT: &[u8] = b"{\"\xff\xfe\"} 1\n";
+pub const UTF8_LABEL_NAME_FF_INPUT: &[u8] = b"foo{\"\xff\"=\"v\"} 1\n";
+pub const UTF8_LABEL_NAME_C3_INPUT: &[u8] = b"foo{\"\xc3\"=\"v\"} 1\n";
+
+// A backslash escaped-newline pair inside a quoted token: the newline is
+// the escape payload, and `\<newline>` is not a valid escape sequence.
+pub const ESCAPE_LF_QUOTED_NAME_TEXT_INPUT: &[u8] = b"\"foo\\\nbar\" 1\n";
+pub const ESCAPE_LF_QUOTED_NAME_EOS_INPUT: &[u8] = b"\"foo\\\n";
+pub const ESCAPE_LF_LABEL_VALUE_INPUT: &[u8] = b"m{a=\"x\\\n\"} 1\n";
+pub const ESCAPE_LF_LABEL_NAME_INPUT: &[u8] = b"m{\"a\\\nb\"=\"v\"} 1\n";
+
 pub const SUMMARY_NAN_QUANTILE_INPUT: &str = r#"# TYPE s summary
 s{quantile="NaN"} 42
 "#;

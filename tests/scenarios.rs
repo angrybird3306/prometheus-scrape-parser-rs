@@ -38,27 +38,36 @@ mod common;
 
 use common::scenarios::{
     BAD_LE_THEN_GOOD_LE_INPUT, BAD_QUANTILE_THEN_GOOD_QUANTILE_INPUT, DUPLICATE_VALID_LE_INPUT,
-    ERROR_SCENARIO_0_INPUT, ERROR_SCENARIO_1_INPUT, ERROR_SCENARIO_2_INPUT, ERROR_SCENARIO_3_INPUT,
-    ERROR_SCENARIO_4_INPUT, ERROR_SCENARIO_5_INPUT, ERROR_SCENARIO_6_INPUT, ERROR_SCENARIO_7_INPUT,
-    ERROR_SCENARIO_8_INPUT, ERROR_SCENARIO_9_INPUT, ERROR_SCENARIO_10_INPUT,
-    ERROR_SCENARIO_11_INPUT, ERROR_SCENARIO_12_INPUT, ERROR_SCENARIO_13_INPUT,
-    ERROR_SCENARIO_14_INPUT, ERROR_SCENARIO_15_INPUT, ERROR_SCENARIO_16_INPUT,
-    ERROR_SCENARIO_17_INPUT, ERROR_SCENARIO_18_INPUT, ERROR_SCENARIO_19_INPUT,
-    ERROR_SCENARIO_20_INPUT, ERROR_SCENARIO_21_INPUT, ERROR_SCENARIO_22_INPUT,
-    ERROR_SCENARIO_23_INPUT, ERROR_SCENARIO_24_INPUT, ERROR_SCENARIO_25_INPUT,
-    ERROR_SCENARIO_26_INPUT, ERROR_SCENARIO_27_INPUT, ERROR_SCENARIO_28_INPUT,
-    ERROR_SCENARIO_29_INPUT, ERROR_SCENARIO_30_INPUT, ERROR_SCENARIO_31_INPUT,
-    ERROR_SCENARIO_32_INPUT, ERROR_SCENARIO_33_INPUT, ERROR_SCENARIO_34_INPUT,
-    ERROR_SCENARIO_35_INPUT, ERROR_SCENARIO_36_INPUT, ERROR_SCENARIO_37_INPUT,
-    ERROR_SCENARIO_38_INPUT, ERROR_SCENARIO_39_INPUT, ERROR_SCENARIO_40_INPUT,
-    ERROR_SCENARIO_41_INPUT, ERROR_SCENARIO_42_INPUT, ERROR_SCENARIO_43_INPUT,
-    ERROR_SCENARIO_44_INPUT, ERROR_SCENARIO_45_INPUT, ERROR_SCENARIO_46_INPUT,
-    ERROR_SCENARIO_47_INPUT, GOOD_LE_THEN_BAD_LE_INPUT, HISTOGRAM_BUCKET_ABOVE_U64_RANGE_INPUT,
+    EOF_BRACE_INPUT, EOF_LABEL_EQ_INPUT, EOF_LABEL_VALUE_OPEN_INPUT, EOF_NAME_BACKSLASH_INPUT,
+    EOF_NAME_DOUBLE_BACKSLASH_INPUT, EOF_NAME_INPUT, EOF_NAME_SPACE_INPUT, EOF_QUOTED_NAME_INPUT,
+    EOF_QUOTED_NAME_SPACE_INPUT, EOF_TYPE_BOGUS_INPUT, EOF_VALUE_BRACE_SPACE_INPUT,
+    EOF_VALUE_SPACE_INPUT, ERROR_SCENARIO_0_INPUT, ERROR_SCENARIO_1_INPUT, ERROR_SCENARIO_2_INPUT,
+    ERROR_SCENARIO_3_INPUT, ERROR_SCENARIO_4_INPUT, ERROR_SCENARIO_5_INPUT, ERROR_SCENARIO_6_INPUT,
+    ERROR_SCENARIO_7_INPUT, ERROR_SCENARIO_8_INPUT, ERROR_SCENARIO_9_INPUT,
+    ERROR_SCENARIO_10_INPUT, ERROR_SCENARIO_11_INPUT, ERROR_SCENARIO_12_INPUT,
+    ERROR_SCENARIO_13_INPUT, ERROR_SCENARIO_14_INPUT, ERROR_SCENARIO_15_INPUT,
+    ERROR_SCENARIO_16_INPUT, ERROR_SCENARIO_17_INPUT, ERROR_SCENARIO_18_INPUT,
+    ERROR_SCENARIO_19_INPUT, ERROR_SCENARIO_20_INPUT, ERROR_SCENARIO_21_INPUT,
+    ERROR_SCENARIO_22_INPUT, ERROR_SCENARIO_23_INPUT, ERROR_SCENARIO_24_INPUT,
+    ERROR_SCENARIO_25_INPUT, ERROR_SCENARIO_26_INPUT, ERROR_SCENARIO_27_INPUT,
+    ERROR_SCENARIO_28_INPUT, ERROR_SCENARIO_29_INPUT, ERROR_SCENARIO_30_INPUT,
+    ERROR_SCENARIO_31_INPUT, ERROR_SCENARIO_32_INPUT, ERROR_SCENARIO_33_INPUT,
+    ERROR_SCENARIO_34_INPUT, ERROR_SCENARIO_35_INPUT, ERROR_SCENARIO_36_INPUT,
+    ERROR_SCENARIO_37_INPUT, ERROR_SCENARIO_38_INPUT, ERROR_SCENARIO_39_INPUT,
+    ERROR_SCENARIO_40_INPUT, ERROR_SCENARIO_41_INPUT, ERROR_SCENARIO_42_INPUT,
+    ERROR_SCENARIO_43_INPUT, ERROR_SCENARIO_44_INPUT, ERROR_SCENARIO_45_INPUT,
+    ERROR_SCENARIO_46_INPUT, ERROR_SCENARIO_47_INPUT, ESCAPE_LF_LABEL_NAME_INPUT,
+    ESCAPE_LF_LABEL_VALUE_INPUT, ESCAPE_LF_QUOTED_NAME_EOS_INPUT, ESCAPE_LF_QUOTED_NAME_TEXT_INPUT,
+    GOOD_LE_THEN_BAD_LE_INPUT, HISTOGRAM_BUCKET_ABOVE_U64_RANGE_INPUT,
     HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT, HISTOGRAM_COUNT_ABOVE_U64_RANGE_INPUT,
     HISTOGRAM_COUNT_ABOVE_U64_RANGE_NORMALIZES_INPUT,
     HISTOGRAM_COUNT_BELOW_U64_RANGE_BOUNDARY_INPUT, HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT,
     HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT, LENIENT_FALLBACK_BAD_LE_INPUT,
-    LENIENT_FALLBACK_BAD_QUANTILE_INPUT, LENIENT_FALLBACK_BAD_THEN_GOOD_LE_INPUT, SCENARIO_0_INPUT,
+    LENIENT_FALLBACK_BAD_QUANTILE_INPUT, LENIENT_FALLBACK_BAD_THEN_GOOD_LE_INPUT,
+    MULTI_DUP_LABEL_BAD_VALUE_INPUT, MULTI_RESERVED_BAD_VALUE_INPUT,
+    MULTI_SECOND_HELP_BAD_ESCAPE_INPUT, MULTI_SECOND_TYPE_BOGUS_INPUT,
+    MULTI_SECOND_TYPE_SUFFIX_BOGUS_INPUT, MULTI_TYPE_AFTER_SAMPLES_BOGUS_INPUT,
+    NAME_BACKSLASH_SPACE_INPUT, NAME_DOUBLE_BACKSLASH_SPACE_INPUT, SCENARIO_0_INPUT,
     SCENARIO_1_INPUT, SCENARIO_2_INPUT, SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT,
     SCENARIO_6_INPUT, SCENARIO_7_INPUT, SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT,
     SCENARIO_11_INPUT, SCENARIO_12_INPUT, SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT,
@@ -69,7 +78,9 @@ use common::scenarios::{
     SUMMARY_COUNT_ONE_E19_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT,
     SUMMARY_COUNT_SUFFIX_FAMILY_INPUT, SUMMARY_FRACTIONAL_COUNT_INPUT,
     SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT, SUMMARY_NEGATIVE_COUNT_INPUT,
-    SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
+    SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT, TRUNCATED_DUP_LABEL_INPUT,
+    UTF8_BRACED_NAME_FF_FE_INPUT, UTF8_HELP_NAME_C3_INPUT, UTF8_LABEL_NAME_C3_INPUT,
+    UTF8_LABEL_NAME_FF_INPUT, UTF8_NAME_C3_INPUT, UTF8_NAME_FF_INPUT,
 };
 
 use common::{TestMode, modes, parse, parse_strict};
@@ -620,13 +631,19 @@ fn text_parse_17_a_float_gauge_histogram_where_only_one_of_the_buckets_is_really
 // Go's strings.Index check. An empty expectation asserts a successful parse.
 
 fn assert_error_scenario(input: &str, err_utf8: &str, err_legacy: &str) {
+    assert_error_scenario_bytes(input.as_bytes(), err_utf8, err_legacy);
+}
+
+/// Byte-string variant for inputs that are not valid UTF-8 (raw `\xff`
+/// bytes in name tokens).
+fn assert_error_scenario_bytes(input: &[u8], err_utf8: &str, err_legacy: &str) {
     let expected_legacy = if err_legacy.is_empty() {
         err_utf8
     } else {
         err_legacy
     };
     for (scheme, expected) in [(Scheme::Utf8, err_utf8), (Scheme::Legacy, expected_legacy)] {
-        let (_, err) = parse_strict(input.as_bytes(), scheme);
+        let (_, err) = parse_strict(input, scheme);
         if expected.is_empty() {
             assert_eq!(err, None, "expected no error under {scheme:?}");
         } else {
@@ -1168,6 +1185,350 @@ fn text_parse_error_47_empty_braces_with_no_metric_name_should_fail_with_error_i
     assert_error_scenario(
         input,
         "text format parsing error in line 1: invalid metric name",
+        "",
+    );
+}
+
+// ================ multiple violations: no priority chasing ================
+// A line (or a TYPE chain) violating several rules reports whichever error
+// this crate's reading order finds first; Go's state machine picks by its
+// own validation order. Both are meaningful errors on the right line —
+// Go's priority is deliberately not replicated (see "Known deviations
+// from Go" in the README). These tests pin the answers so a refactor
+// cannot silently change them. Go's differing pick is noted per test.
+
+// Go reports the reserved __name__ label first; the bad value is what this
+// crate's lexer hits first.
+#[test]
+fn multi_violation_reserved_label_with_bad_value_should_fail_with_expected_float_as_value() {
+    assert_error_scenario(
+        MULTI_RESERVED_BAD_VALUE_INPUT,
+        "text format parsing error in line 1: expected float as value",
+        "",
+    );
+}
+
+// Go reports the duplicate label names first.
+#[test]
+fn multi_violation_duplicate_labels_with_bad_value_should_fail_with_expected_float_as_value() {
+    assert_error_scenario(
+        MULTI_DUP_LABEL_BAD_VALUE_INPUT,
+        "text format parsing error in line 1: expected float as value",
+        "",
+    );
+}
+
+// Go reports the second HELP line first.
+#[test]
+fn multi_violation_second_help_with_bad_escape_should_fail_with_invalid_escape_sequence() {
+    assert_error_scenario(
+        MULTI_SECOND_HELP_BAD_ESCAPE_INPUT,
+        "text format parsing error in line 2: invalid escape sequence '\\t'",
+        "",
+    );
+}
+
+// Go reports the second TYPE line first.
+#[test]
+fn multi_violation_second_type_with_bogus_type_should_fail_with_unknown_metric_type() {
+    assert_error_scenario(
+        MULTI_SECOND_TYPE_BOGUS_INPUT,
+        "text format parsing error in line 2: unknown metric type",
+        "",
+    );
+}
+
+// Go reports TYPE-reported-after-samples first.
+#[test]
+fn multi_violation_type_after_samples_with_bogus_type_should_fail_with_unknown_metric_type() {
+    assert_error_scenario(
+        MULTI_TYPE_AFTER_SAMPLES_BOGUS_INPUT,
+        "text format parsing error in line 2: unknown metric type",
+        "",
+    );
+}
+
+// Go reports the second TYPE of the suffix-resolved family "s" first; the
+// suffix TYPE fold runs in this crate's fold phase, after the lexer's
+// type-keyword check.
+#[test]
+fn multi_violation_second_type_via_suffix_with_bogus_type_should_fail_with_unknown_metric_type() {
+    assert_error_scenario(
+        MULTI_SECOND_TYPE_SUFFIX_BOGUS_INPUT,
+        "text format parsing error in line 3: unknown metric type",
+        "",
+    );
+}
+
+// ================= truncated token reads: EOF mid-token =====================
+// A token the input cuts off mid-read is a truncation, not a content
+// error: "unexpected end of input stream" names what actually happened
+// (mirroring Go, whose token readers error at EOF before validating).
+// Red until the lexer converts the cut reads.
+
+#[test]
+fn eof_name_backslash_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // A03/A27.
+    assert_error_scenario_bytes(
+        EOF_NAME_BACKSLASH_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_name_double_backslash_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // A04.
+    assert_error_scenario_bytes(
+        EOF_NAME_DOUBLE_BACKSLASH_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_name_only_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G01.
+    assert_error_scenario_bytes(
+        EOF_NAME_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_name_space_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G02.
+    assert_error_scenario_bytes(
+        EOF_NAME_SPACE_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_value_space_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G03.
+    assert_error_scenario_bytes(
+        EOF_VALUE_SPACE_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_quoted_name_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G04.
+    assert_error_scenario_bytes(
+        EOF_QUOTED_NAME_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_label_value_open_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G05.
+    assert_error_scenario_bytes(
+        EOF_LABEL_VALUE_OPEN_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_label_eq_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G06/G25.
+    assert_error_scenario_bytes(
+        EOF_LABEL_EQ_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_brace_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G07.
+    assert_error_scenario_bytes(
+        EOF_BRACE_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_type_bogus_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G24: the cut line must not dress its cut type token up as an unknown
+    // type.
+    assert_error_scenario_bytes(
+        EOF_TYPE_BOGUS_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_value_brace_space_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G26.
+    assert_error_scenario_bytes(
+        EOF_VALUE_BRACE_SPACE_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+#[test]
+fn eof_quoted_name_space_truncated_should_fail_with_error_unexpected_end_of_input_stream() {
+    // G27.
+    assert_error_scenario_bytes(
+        EOF_QUOTED_NAME_SPACE_INPUT,
+        "text format parsing error in line 1: unexpected end of input stream",
+        "",
+    );
+}
+
+// Guards: a truncated line whose complete content still violates a rule
+// reports that rule, and newline-terminated lines are untouched.
+#[test]
+fn truncated_line_with_complete_duplicate_labels_should_fail_with_error_duplicate_label_names() {
+    // G32: every token is complete, so the duplicate wins over the
+    // truncation.
+    assert_error_scenario_bytes(
+        TRUNCATED_DUP_LABEL_INPUT,
+        "text format parsing error in line 1: duplicate label names for metric \"m\"",
+        "",
+    );
+}
+
+#[test]
+fn name_backslash_before_space_should_fail_with_error_expected_float_as_value() {
+    // A01: the blank ends the value token, so this is a content error.
+    assert_error_scenario_bytes(
+        NAME_BACKSLASH_SPACE_INPUT,
+        "text format parsing error in line 1: expected float as value, got \"\\\\\"",
+        "",
+    );
+}
+
+#[test]
+fn name_double_backslash_before_space_should_fail_with_error_expected_float_as_value() {
+    // A02.
+    assert_error_scenario_bytes(
+        NAME_DOUBLE_BACKSLASH_SPACE_INPUT,
+        "text format parsing error in line 1: expected float as value, got \"\\\\\\\\bar\"",
+        "",
+    );
+}
+
+// ============== name / label utf-8 errors carry the raw bytes ==============
+// The UTF-8 failures on name tokens quote the offending bytes like Go and
+// classify by reading position: the first quoted token of a line-start
+// brace is a metric name, a quoted token after `metric{` is a label name.
+// Red until the lexer reports the byte-carrying kinds.
+
+#[test]
+fn utf8_quoted_name_should_fail_with_error_invalid_metric_name_with_bytes() {
+    // H13.
+    assert_error_scenario_bytes(
+        UTF8_NAME_FF_INPUT,
+        "text format parsing error in line 1: invalid metric name \"\\xff\"",
+        "",
+    );
+}
+
+#[test]
+fn utf8_quoted_name_partial_sequence_should_fail_with_error_invalid_metric_name_with_bytes() {
+    // H32.
+    assert_error_scenario_bytes(
+        UTF8_NAME_C3_INPUT,
+        "text format parsing error in line 1: invalid metric name \"\\xc3\"",
+        "",
+    );
+}
+
+#[test]
+fn utf8_help_name_should_fail_with_error_invalid_metric_name_with_bytes() {
+    // K16.
+    assert_error_scenario_bytes(
+        UTF8_HELP_NAME_C3_INPUT,
+        "text format parsing error in line 1: invalid metric name \"\\xc3\"",
+        "",
+    );
+}
+
+#[test]
+fn utf8_braced_name_should_fail_with_error_invalid_metric_name_with_bytes() {
+    // H15: a line-start brace reads its first quoted token as the metric
+    // name, so the metric-name text wins.
+    assert_error_scenario_bytes(
+        UTF8_BRACED_NAME_FF_FE_INPUT,
+        "text format parsing error in line 1: invalid metric name \"\\xff\\xfe\"",
+        "",
+    );
+}
+
+#[test]
+fn utf8_quoted_label_name_should_fail_with_error_invalid_label_name_with_bytes() {
+    // H20: after `metric{`, the quoted token is a label name.
+    assert_error_scenario_bytes(
+        UTF8_LABEL_NAME_FF_INPUT,
+        "text format parsing error in line 1: invalid label name \"\\xff\"",
+        "",
+    );
+}
+
+#[test]
+fn utf8_quoted_label_name_partial_sequence_should_fail_with_error_invalid_label_name_with_bytes() {
+    // H31.
+    assert_error_scenario_bytes(
+        UTF8_LABEL_NAME_C3_INPUT,
+        "text format parsing error in line 1: invalid label name \"\\xc3\"",
+        "",
+    );
+}
+
+// ============ backslash-escaped newline inside a quoted token ==============
+// The line splitter cuts at the newline, so the token scan sees the escape
+// pending at the slice end: Go reads the newline as the escape payload and
+// reports `invalid escape sequence '\<newline>'`. Red until the scanner
+// checks the pending escape before the end-of-line classification.
+
+#[test]
+fn escape_lf_in_quoted_name_text_should_fail_with_error_invalid_escape_sequence() {
+    // A05.
+    assert_error_scenario_bytes(
+        ESCAPE_LF_QUOTED_NAME_TEXT_INPUT,
+        "text format parsing error in line 1: invalid escape sequence '\\\n'",
+        "",
+    );
+}
+
+#[test]
+fn escape_lf_in_quoted_name_at_eos_should_fail_with_error_invalid_escape_sequence() {
+    // A07.
+    assert_error_scenario_bytes(
+        ESCAPE_LF_QUOTED_NAME_EOS_INPUT,
+        "text format parsing error in line 1: invalid escape sequence '\\\n'",
+        "",
+    );
+}
+
+#[test]
+fn escape_lf_in_label_value_should_fail_with_error_invalid_escape_sequence() {
+    // A08.
+    assert_error_scenario_bytes(
+        ESCAPE_LF_LABEL_VALUE_INPUT,
+        "text format parsing error in line 1: invalid escape sequence '\\\n'",
+        "",
+    );
+}
+
+#[test]
+fn escape_lf_in_quoted_label_name_should_fail_with_error_invalid_escape_sequence() {
+    // A28.
+    assert_error_scenario_bytes(
+        ESCAPE_LF_LABEL_NAME_INPUT,
+        "text format parsing error in line 1: invalid escape sequence '\\\n'",
         "",
     );
 }
