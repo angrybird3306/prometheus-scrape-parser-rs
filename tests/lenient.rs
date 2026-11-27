@@ -23,9 +23,7 @@ mod common;
 
 use common::scenarios::scenario_inputs;
 use common::{TestMode, parse};
-use prometheus_scrape_parser_rs::{
-    Bucket, ErrorKind, HistogramValue, IntOrFloat, MetricValue, SummaryValue,
-};
+use prometheus_scrape_parser_rs::{Bucket, ErrorKind, HistogramValue, IntOrFloat, MetricValue};
 
 // Empty input yields no families.
 #[test]
@@ -206,34 +204,4 @@ h_bucket{le=\"+Inf\"} 7
     let err = stats.last_error.as_ref().unwrap();
     assert_eq!(err.line, 2);
     assert!(matches!(err.kind, ErrorKind::NegativeHistogramCount { .. }));
-}
-
-// A negative summary count is rejected like the histogram one: lenient
-// drops just the line, keeps the family, and records the error.
-#[test]
-fn lenient_on_negative_summary_count_should_drop_only_the_line() {
-    let (got, stats) = parse(
-        b"# TYPE s summary
-s_count -5
-s_sum 1.5
-",
-        TestMode::Lenient,
-    );
-    assert_eq!(got.len(), 1);
-    assert_eq!(got[0].name, "s");
-    assert_eq!(got[0].metrics.len(), 1);
-    assert_eq!(
-        got[0].metrics[0].value,
-        MetricValue::Summary(SummaryValue {
-            sample_count: None,
-            sample_sum: Some(1.5),
-            quantiles: vec![],
-        })
-    );
-    assert_eq!(stats.lines_total, 3);
-    assert_eq!(stats.skipped_lines, 1);
-    assert_eq!(stats.skipped_families, 0);
-    let err = stats.last_error.as_ref().unwrap();
-    assert_eq!(err.line, 2);
-    assert!(matches!(err.kind, ErrorKind::NegativeSummaryCount { .. }));
 }

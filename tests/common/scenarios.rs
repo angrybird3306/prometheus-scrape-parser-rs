@@ -391,6 +391,36 @@ pub const SUMMARY_FRACTIONAL_COUNT_INPUT: &str = r#"# TYPE s summary
 s_count 42.9
 "#;
 
+pub const SUMMARY_COUNT_NAN_INPUT: &str = r#"# TYPE s summary
+s_count NaN
+s_sum 1
+"#;
+
+pub const SUMMARY_COUNT_INFINITE_INPUT: &str = r#"# TYPE s summary
+s_count +Inf
+s_sum 1
+"#;
+
+pub const SUMMARY_COUNT_ABOVE_U64_RANGE_INPUT: &str = r#"# TYPE s summary
+s_count 18446744073709551616
+s_sum 1
+"#;
+
+pub const SUMMARY_COUNT_NEG_FRACTIONAL_INPUT: &str = r#"# TYPE s summary
+s_count -0.5
+s_sum 1
+"#;
+
+pub const SUMMARY_COUNT_ONE_E19_INPUT: &str = r#"# TYPE s summary
+s_count 1e19
+s_sum 1
+"#;
+
+pub const SUMMARY_COUNT_2P63_INPUT: &str = r#"# TYPE s summary
+s_count 9223372036854775808
+s_sum 1
+"#;
+
 pub const STRICT_ABORT_PARTIAL_INPUT: &str = r#"# TYPE h histogram
 h_bucket{le="1"} 10
 h_count -5

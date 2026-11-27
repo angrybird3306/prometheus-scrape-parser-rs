@@ -60,7 +60,9 @@ use common::scenarios::{
     SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT, SCENARIO_6_INPUT, SCENARIO_7_INPUT,
     SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT, SCENARIO_11_INPUT, SCENARIO_12_INPUT,
     SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT, SCENARIO_16_INPUT, SCENARIO_17_INPUT,
-    STRICT_ABORT_PARTIAL_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT,
+    STRICT_ABORT_PARTIAL_INPUT, SUMMARY_COUNT_2P63_INPUT, SUMMARY_COUNT_ABOVE_U64_RANGE_INPUT,
+    SUMMARY_COUNT_INFINITE_INPUT, SUMMARY_COUNT_NAN_INPUT, SUMMARY_COUNT_NEG_FRACTIONAL_INPUT,
+    SUMMARY_COUNT_ONE_E19_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT,
     SUMMARY_COUNT_SUFFIX_FAMILY_INPUT, SUMMARY_FRACTIONAL_COUNT_INPUT,
     SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT, SUMMARY_NEGATIVE_COUNT_INPUT,
     SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
@@ -1186,18 +1188,137 @@ fn strict_summary_on_nan_quantile_should_pass_with_quantile_and_value_dropped() 
     assert_eq!(got, want);
 }
 
-// A negative summary count errors in both modes; Go wraps it through
-// uint64(value) instead (probed behavior, overridden by user decision).
+// Go's summary count conversion is amd64 `uint64(value)` in every mode:
+// exact truncation on [0, 2^64), i64-bit wraparound on negatives, and the
+// integer-indefinite 2^63 for NaN, infinities, and >= 2^64.
 #[test]
-fn strict_summary_on_negative_count_should_fail_with_error_negative_count_for_summary() {
-    let input = SUMMARY_NEGATIVE_COUNT_INPUT;
-    let (got, err) = parse_strict(input.as_bytes(), Scheme::Utf8);
-    let err = err.expect("expected abort error");
-    assert_eq!(err.line, 2);
-    assert!(matches!(err.kind, ErrorKind::NegativeSummaryCount { .. }));
-    assert_eq!(got.len(), 1);
-    assert_eq!(got[0].name, "s");
-    assert_eq!(got[0].metrics.len(), 1);
+fn summary_on_nan_count_should_pass_like_go_uint64_conversion_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_NAN_INPUT,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(
+                vec![],
+                None,
+                Some(9223372036854775808),
+                Some(1.0),
+                vec![],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn summary_on_infinite_count_should_pass_like_go_uint64_conversion_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_INFINITE_INPUT,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(
+                vec![],
+                None,
+                Some(9223372036854775808),
+                Some(1.0),
+                vec![],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn summary_on_count_above_the_u64_range_should_pass_like_go_uint64_conversion_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_ABOVE_U64_RANGE_INPUT,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(
+                vec![],
+                None,
+                Some(9223372036854775808),
+                Some(1.0),
+                vec![],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn summary_on_negative_count_should_pass_like_go_uint64_conversion_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_NEGATIVE_COUNT_INPUT,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(
+                vec![],
+                None,
+                Some(18446744073709551611),
+                None,
+                vec![],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn summary_on_negative_fractional_count_should_pass_like_go_uint64_conversion_in_every_mode() {
+    // -0.5 truncates toward zero: amd64 converts it to i64 0, so u64 0.
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_NEG_FRACTIONAL_INPUT,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(vec![], None, Some(0), Some(1.0), vec![])],
+        )],
+    );
+}
+
+// Controls: [2^63, 2^64) truncates exactly — the conversion must neither
+// reject there nor saturate through i64.
+#[test]
+fn summary_on_count_between_2p63_and_2p64_should_pass_with_exact_truncation_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_ONE_E19_INPUT,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(
+                vec![],
+                None,
+                Some(10000000000000000000),
+                Some(1.0),
+                vec![],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn summary_on_count_2p63_should_pass_with_exact_truncation_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_2P63_INPUT,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(
+                vec![],
+                None,
+                Some(9223372036854775808),
+                Some(1.0),
+                vec![],
+            )],
+        )],
+    );
 }
 
 // quantile="+Inf" is not NaN, so Go keeps it.
