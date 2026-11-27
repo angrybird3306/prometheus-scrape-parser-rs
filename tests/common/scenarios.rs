@@ -501,6 +501,21 @@ pub const DUPLICATE_VALID_LE_INPUT: &str = r#"# TYPE h histogram
 h_bucket{le="0.5",le="+Inf"} 2
 "#;
 
+pub const LENIENT_FALLBACK_BAD_LE_INPUT: &str = r#"# TYPE h histogram
+h_bucket{le="+Inf"} 1
+h_bucket{le="bla"} 2
+"#;
+
+pub const LENIENT_FALLBACK_BAD_QUANTILE_INPUT: &str = r#"# TYPE s summary
+s{quantile="0.5"} 1
+s{quantile="bla"} 2
+"#;
+
+pub const LENIENT_FALLBACK_BAD_THEN_GOOD_LE_INPUT: &str = r#"# TYPE h histogram
+h_bucket{le="+Inf"} 1
+h_bucket{le="bla",le="1"} 2
+"#;
+
 /// Every scenario payload with a short label for assertion messages.
 pub fn scenario_inputs() -> Vec<(&'static str, &'static [u8])> {
     vec![

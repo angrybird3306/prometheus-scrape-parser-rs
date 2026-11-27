@@ -51,7 +51,10 @@ pub trait Mode: Send {
 
 /// Accepts everything the lexer can express structurally. Name charsets,
 /// `__name__`, duplicate labels/HELP/TYPE, and unknown escapes are left
-/// unchecked; escapes are kept verbatim.
+/// unchecked; escapes are kept verbatim. A row that cannot fold into its
+/// family's type — an unparseable `quantile`/`le` label value, a negative
+/// count — is dropped whole with the error recorded: malformed values
+/// never enter the output.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LenientMode;
 

@@ -477,10 +477,10 @@ fn parser_strict_abort_after_a_clean_boundary_hold_should_yield_the_held_family_
 }
 
 #[test]
-fn parser_lenient_fallback_rows_inside_a_histogram_should_stay_whole() {
-    // A lenient fallback row (bad `le`) is a plain sample: whole as it
-    // stands, and it never keeps the real rows from gathering across a
-    // boundary.
+fn parser_lenient_malformed_le_row_should_drop_itself_and_keep_the_sample_group_whole() {
+    // A malformed row (bad `le`) drops itself whole — erroneous input never
+    // enters the output — while the real rows still gather across a
+    // boundary into one whole histogram.
     let part1 = b"# TYPE h histogram\n\
                   h_bucket{le=\"1\"} 1\n\
                   h_bucket{le=\"bla\"} 2\n";
@@ -495,15 +495,22 @@ fn parser_lenient_fallback_rows_inside_a_histogram_should_stay_whole() {
     assert_eq!(parser.reset(), Ok(()));
 
     assert_eq!(families.len(), 1);
-    assert_eq!(families[0].metrics.len(), 2);
+    assert_eq!(families[0].metrics.len(), 1);
     let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
-        panic!("the first row must be the histogram");
+        panic!("the family must hold the histogram");
     };
     assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(1)));
     assert_eq!(histogram.sample_sum, Some(1.5));
     assert_eq!(histogram.buckets.len(), 1);
-    assert_eq!(families[0].metrics[1].value, MetricValue::Sample(2.0));
-    assert!(families[0].metrics[1].labels.is_empty());
+
+    let stats = parser.stats();
+    assert_eq!(stats.skipped_lines, 1);
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 3);
+    assert!(
+        matches!(err.kind, ErrorKind::ExpectedLeFloat { ref got } if got == "bla"),
+        "unexpected error kind {err}"
+    );
 }
 
 #[test]

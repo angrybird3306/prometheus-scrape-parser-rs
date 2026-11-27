@@ -57,17 +57,19 @@ use common::scenarios::{
     HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT, HISTOGRAM_COUNT_ABOVE_U64_RANGE_INPUT,
     HISTOGRAM_COUNT_ABOVE_U64_RANGE_NORMALIZES_INPUT,
     HISTOGRAM_COUNT_BELOW_U64_RANGE_BOUNDARY_INPUT, HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT,
-    HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT, SCENARIO_0_INPUT, SCENARIO_1_INPUT, SCENARIO_2_INPUT,
-    SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT, SCENARIO_6_INPUT, SCENARIO_7_INPUT,
-    SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT, SCENARIO_11_INPUT, SCENARIO_12_INPUT,
-    SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT, SCENARIO_16_INPUT, SCENARIO_17_INPUT,
-    SPURIOUS_TABS_EVERYWHERE_INPUT, SPURIOUS_TRAILING_BLANK_INPUT, SPURIOUS_TRAILING_TAB_INPUT,
-    SPURIOUS_TRAILING_TWO_BLANKS_INPUT, STRICT_ABORT_PARTIAL_INPUT, SUMMARY_COUNT_2P63_INPUT,
-    SUMMARY_COUNT_ABOVE_U64_RANGE_INPUT, SUMMARY_COUNT_INFINITE_INPUT, SUMMARY_COUNT_NAN_INPUT,
-    SUMMARY_COUNT_NEG_FRACTIONAL_INPUT, SUMMARY_COUNT_ONE_E19_INPUT,
-    SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_INPUT,
-    SUMMARY_FRACTIONAL_COUNT_INPUT, SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT,
-    SUMMARY_NEGATIVE_COUNT_INPUT, SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
+    HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT, LENIENT_FALLBACK_BAD_LE_INPUT,
+    LENIENT_FALLBACK_BAD_QUANTILE_INPUT, LENIENT_FALLBACK_BAD_THEN_GOOD_LE_INPUT, SCENARIO_0_INPUT,
+    SCENARIO_1_INPUT, SCENARIO_2_INPUT, SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT,
+    SCENARIO_6_INPUT, SCENARIO_7_INPUT, SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT,
+    SCENARIO_11_INPUT, SCENARIO_12_INPUT, SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT,
+    SCENARIO_16_INPUT, SCENARIO_17_INPUT, SPURIOUS_TABS_EVERYWHERE_INPUT,
+    SPURIOUS_TRAILING_BLANK_INPUT, SPURIOUS_TRAILING_TAB_INPUT, SPURIOUS_TRAILING_TWO_BLANKS_INPUT,
+    STRICT_ABORT_PARTIAL_INPUT, SUMMARY_COUNT_2P63_INPUT, SUMMARY_COUNT_ABOVE_U64_RANGE_INPUT,
+    SUMMARY_COUNT_INFINITE_INPUT, SUMMARY_COUNT_NAN_INPUT, SUMMARY_COUNT_NEG_FRACTIONAL_INPUT,
+    SUMMARY_COUNT_ONE_E19_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT,
+    SUMMARY_COUNT_SUFFIX_FAMILY_INPUT, SUMMARY_FRACTIONAL_COUNT_INPUT,
+    SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT, SUMMARY_NEGATIVE_COUNT_INPUT,
+    SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
 };
 
 use common::{TestMode, modes, parse, parse_strict};
@@ -1723,5 +1725,97 @@ fn duplicate_valid_le_last_one_wins_in_every_mode() {
                 vec![(f64::INFINITY, IntOrFloat::Int(2))],
             )],
         )],
+    );
+}
+
+// ==================== lenient drops malformed le/quantile rows ==============
+// A row whose quantile/le label value cannot be parsed is dropped whole —
+// erroneous input never enters the output — and the error is recorded;
+// the family keeps its real rows.
+
+#[test]
+fn lenient_on_bad_le_should_drop_the_line_and_keep_the_real_rows() {
+    let (got, stats) = parse(LENIENT_FALLBACK_BAD_LE_INPUT.as_bytes(), TestMode::Lenient);
+    assert_eq!(stats.skipped_lines, 1);
+    let err = stats
+        .last_error
+        .expect("expected the bad le to be recorded");
+    assert_eq!(err.line, 3);
+    assert!(
+        matches!(err.kind, ErrorKind::ExpectedLeFloat { ref got } if got == "bla"),
+        "unexpected error kind {err}"
+    );
+    assert_eq!(
+        got,
+        vec![family(
+            "h",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                None,
+                None,
+                vec![(f64::INFINITY, IntOrFloat::Int(1))],
+            )],
+        )]
+    );
+}
+
+#[test]
+fn lenient_on_bad_quantile_should_drop_the_line_and_keep_the_real_rows() {
+    let (got, stats) = parse(
+        LENIENT_FALLBACK_BAD_QUANTILE_INPUT.as_bytes(),
+        TestMode::Lenient,
+    );
+    assert_eq!(stats.skipped_lines, 1);
+    let err = stats
+        .last_error
+        .expect("expected the bad quantile to be recorded");
+    assert_eq!(err.line, 3);
+    assert!(
+        matches!(err.kind, ErrorKind::ExpectedQuantileFloat { ref got } if got == "bla"),
+        "unexpected error kind {err}"
+    );
+    assert_eq!(
+        got,
+        vec![family(
+            "s",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(vec![], None, None, None, vec![(0.5, 1.0)])],
+        )]
+    );
+}
+
+#[test]
+fn lenient_on_bad_then_good_le_should_drop_the_line_and_keep_the_real_rows() {
+    let (got, stats) = parse(
+        LENIENT_FALLBACK_BAD_THEN_GOOD_LE_INPUT.as_bytes(),
+        TestMode::Lenient,
+    );
+    assert_eq!(stats.skipped_lines, 1);
+    let err = stats
+        .last_error
+        .expect("expected the bad le to be recorded");
+    assert_eq!(err.line, 3);
+    assert!(
+        matches!(err.kind, ErrorKind::ExpectedLeFloat { ref got } if got == "bla"),
+        "unexpected error kind {err}"
+    );
+    assert_eq!(
+        got,
+        vec![family(
+            "h",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                None,
+                None,
+                vec![(f64::INFINITY, IntOrFloat::Int(1))],
+            )],
+        )]
     );
 }
