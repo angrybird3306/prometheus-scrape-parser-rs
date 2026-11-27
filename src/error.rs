@@ -100,9 +100,6 @@ pub enum ErrorKind {
     NegativeHistogramCount { family: String },
     /// `negative bucket population for histogram %q`.
     NegativeHistogramBucket { family: String },
-    /// Our own phrasing after `negative count for histogram %q`; Go instead
-    /// wraps negative summary counts through amd64 `uint64(value)`.
-    NegativeSummaryCount { family: String },
     /// Invalid UTF-8 in a name token. Label-value UTF-8 errors use
     /// [`ErrorKind::InvalidLabelValueUtf8`] instead.
     InvalidUtf8 { context: &'static str },
@@ -209,9 +206,6 @@ impl fmt::Display for ErrorKind {
             }
             ErrorKind::NegativeHistogramBucket { family } => {
                 write!(f, "negative bucket population for histogram {family:?}")
-            }
-            ErrorKind::NegativeSummaryCount { family } => {
-                write!(f, "negative count for summary {family:?}")
             }
             ErrorKind::InvalidUtf8 { context } => {
                 write!(f, "invalid UTF-8 in {context}")

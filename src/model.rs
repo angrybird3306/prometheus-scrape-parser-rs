@@ -38,8 +38,10 @@ pub enum MetricValue {
 }
 
 /// Aggregated summary, mirroring dto.Summary. Sample counts never occur as
-/// floats in the classic text format, so negative input counts wrap like
-/// Go's `uint64(value)` conversion instead of switching fields.
+/// floats in the classic text format: they go through Go's amd64
+/// `uint64(value)` conversion — exact truncation on [0, 2^64), i64-bit
+/// wraparound on negatives, and the integer-indefinite 2^63 for NaN,
+/// infinities, and >= 2^64.
 #[derive(Debug, Clone, Default)]
 pub struct SummaryValue {
     pub sample_count: Option<u64>,

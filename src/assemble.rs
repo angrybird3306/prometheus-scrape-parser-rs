@@ -143,13 +143,16 @@ fn to_float(c: IntOrFloat) -> IntOrFloat {
     }
 }
 
-/// Mirrors Go's `uint64(value)` summary count conversion: truncates
-/// in-range values, wraps negatives like the amd64 float-to-int conversion.
+/// Mirrors Go's amd64 `uint64(value)` summary count conversion: exact
+/// truncation on [0, 2^64), i64-bit wraparound on negatives, and the
+/// integer-indefinite 2^63 for NaN, infinities, and >= 2^64.
 fn count_as_u64(value: f64) -> u64 {
-    if value >= 0.0 && value <= u64::MAX as f64 {
-        value as u64
-    } else {
+    if value.is_nan() || value < -9223372036854775808.0 || value >= 18446744073709551616.0 {
+        9223372036854775808
+    } else if value < 0.0 {
         (value as i64) as u64
+    } else {
+        value as u64
     }
 }
 
@@ -582,11 +585,6 @@ impl<'a> Assembler<'a> {
         let count_row = is_family_count(family_name, &sample.name.decoded);
         let sum_row = is_family_sum(family_name, &sample.name.decoded);
         if count_row {
-            if sample.value < 0.0 {
-                return Err(ErrorKind::NegativeSummaryCount {
-                    family: self.pending_metric_families[idx].name.to_string(),
-                });
-            }
             let MetricValue::Summary(summary) =
                 &mut self.pending_metric_families[idx].metrics[row_idx].value
             else {
