@@ -477,6 +477,14 @@ h_count 18446744073709549568
 h_sum 1.5
 "#;
 
+pub const SPURIOUS_TRAILING_BLANK_INPUT: &str = "m 1 5 \n";
+
+pub const SPURIOUS_TRAILING_TAB_INPUT: &str = "m 1 5\t\n";
+
+pub const SPURIOUS_TRAILING_TWO_BLANKS_INPUT: &str = "m 1 5  \n";
+
+pub const SPURIOUS_TABS_EVERYWHERE_INPUT: &str = "\tm\t1\t2\t\n";
+
 /// Every scenario payload with a short label for assertion messages.
 pub fn scenario_inputs() -> Vec<(&'static str, &'static [u8])> {
     vec![

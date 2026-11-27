@@ -60,12 +60,13 @@ use common::scenarios::{
     SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT, SCENARIO_6_INPUT, SCENARIO_7_INPUT,
     SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT, SCENARIO_11_INPUT, SCENARIO_12_INPUT,
     SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT, SCENARIO_16_INPUT, SCENARIO_17_INPUT,
-    STRICT_ABORT_PARTIAL_INPUT, SUMMARY_COUNT_2P63_INPUT, SUMMARY_COUNT_ABOVE_U64_RANGE_INPUT,
-    SUMMARY_COUNT_INFINITE_INPUT, SUMMARY_COUNT_NAN_INPUT, SUMMARY_COUNT_NEG_FRACTIONAL_INPUT,
-    SUMMARY_COUNT_ONE_E19_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT,
-    SUMMARY_COUNT_SUFFIX_FAMILY_INPUT, SUMMARY_FRACTIONAL_COUNT_INPUT,
-    SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT, SUMMARY_NEGATIVE_COUNT_INPUT,
-    SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
+    SPURIOUS_TABS_EVERYWHERE_INPUT, SPURIOUS_TRAILING_BLANK_INPUT, SPURIOUS_TRAILING_TAB_INPUT,
+    SPURIOUS_TRAILING_TWO_BLANKS_INPUT, STRICT_ABORT_PARTIAL_INPUT, SUMMARY_COUNT_2P63_INPUT,
+    SUMMARY_COUNT_ABOVE_U64_RANGE_INPUT, SUMMARY_COUNT_INFINITE_INPUT, SUMMARY_COUNT_NAN_INPUT,
+    SUMMARY_COUNT_NEG_FRACTIONAL_INPUT, SUMMARY_COUNT_ONE_E19_INPUT,
+    SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_INPUT,
+    SUMMARY_FRACTIONAL_COUNT_INPUT, SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT,
+    SUMMARY_NEGATIVE_COUNT_INPUT, SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
 };
 
 use common::{TestMode, modes, parse, parse_strict};
@@ -1610,5 +1611,63 @@ fn histogram_on_count_below_the_u64_range_boundary_should_pass_with_int_count_in
                 vec![],
             )],
         )],
+    );
+}
+
+// ==================== spurious text after the timestamp =====================
+// Go reads the spurious text from the blank that ends the timestamp token
+// (dropping backslashes along the way) and errors on any non-backslash
+// content — the lexer's check must not skip that leading blank.
+
+#[test]
+fn strict_ts_trailing_blank_should_fail_with_error_spurious_string_after_timestamp() {
+    assert_error_scenario(
+        SPURIOUS_TRAILING_BLANK_INPUT,
+        "text format parsing error in line 1: spurious string after timestamp: \" \"",
+        "",
+    );
+}
+
+#[test]
+fn strict_ts_trailing_tab_should_fail_with_error_spurious_string_after_timestamp() {
+    assert_error_scenario(
+        SPURIOUS_TRAILING_TAB_INPUT,
+        "text format parsing error in line 1: spurious string after timestamp: \"\\t\"",
+        "",
+    );
+}
+
+#[test]
+fn strict_ts_trailing_two_blanks_should_fail_with_error_spurious_string_after_timestamp() {
+    assert_error_scenario(
+        SPURIOUS_TRAILING_TWO_BLANKS_INPUT,
+        "text format parsing error in line 1: spurious string after timestamp: \"  \"",
+        "",
+    );
+}
+
+#[test]
+fn strict_tabs_everywhere_should_fail_with_error_spurious_string_after_timestamp() {
+    assert_error_scenario(
+        SPURIOUS_TABS_EVERYWHERE_INPUT,
+        "text format parsing error in line 1: spurious string after timestamp: \"\\t\"",
+        "",
+    );
+}
+
+// Control: lenient keeps accepting the trailing blank — the fix is
+// strict-only and must not change lenient's disposition.
+#[test]
+fn lenient_ts_trailing_blank_should_pass_with_timestamp_parsed() {
+    let (got, stats) = parse(SPURIOUS_TRAILING_BLANK_INPUT.as_bytes(), TestMode::Lenient);
+    assert_eq!(stats.last_error, None, "unexpected parse error");
+    assert_eq!(
+        got,
+        vec![family(
+            "m",
+            MetricType::Untyped,
+            None,
+            vec![metric(vec![], 1.0, Some(5))],
+        )]
     );
 }
