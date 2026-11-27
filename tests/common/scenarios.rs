@@ -402,6 +402,30 @@ s{a="1",b="2",quantile="0.5"} 1
 s{b="2",a="1",quantile="0.9"} 2
 "#;
 
+pub const SUMMARY_COUNT_SUFFIX_FAMILY_INPUT: &str = r#"# TYPE x_count summary
+x_count{quantile="0.5"} 3
+"#;
+
+pub const SUMMARY_SUM_SUFFIX_FAMILY_INPUT: &str = r#"# TYPE x_sum summary
+x_sum{quantile="0.5"} 3
+"#;
+
+pub const HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT: &str = r#"# TYPE x_count histogram
+x_count{le="1"} 2
+"#;
+
+pub const HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT: &str = r#"# TYPE x_sum histogram
+x_sum{le="1"} 2
+"#;
+
+pub const SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT: &str = r#"# TYPE x_count summary
+x_count 3
+"#;
+
+pub const HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT: &str = r#"# TYPE x_bucket histogram
+x_bucket{le="1"} 2
+"#;
+
 /// Every scenario payload with a short label for assertion messages.
 pub fn scenario_inputs() -> Vec<(&'static str, &'static [u8])> {
     vec![

@@ -52,15 +52,18 @@ use common::scenarios::{
     ERROR_SCENARIO_38_INPUT, ERROR_SCENARIO_39_INPUT, ERROR_SCENARIO_40_INPUT,
     ERROR_SCENARIO_41_INPUT, ERROR_SCENARIO_42_INPUT, ERROR_SCENARIO_43_INPUT,
     ERROR_SCENARIO_44_INPUT, ERROR_SCENARIO_45_INPUT, ERROR_SCENARIO_46_INPUT,
-    ERROR_SCENARIO_47_INPUT, SCENARIO_0_INPUT, SCENARIO_1_INPUT, SCENARIO_2_INPUT,
-    SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT, SCENARIO_6_INPUT, SCENARIO_7_INPUT,
-    SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT, SCENARIO_11_INPUT, SCENARIO_12_INPUT,
-    SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT, SCENARIO_16_INPUT, SCENARIO_17_INPUT,
-    STRICT_ABORT_PARTIAL_INPUT, SUMMARY_FRACTIONAL_COUNT_INPUT, SUMMARY_INFINITE_QUANTILE_INPUT,
-    SUMMARY_NAN_QUANTILE_INPUT, SUMMARY_NEGATIVE_COUNT_INPUT, SUMMARY_PERMUTED_LABELS_INPUT,
+    ERROR_SCENARIO_47_INPUT, HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT,
+    HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT, HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT, SCENARIO_0_INPUT,
+    SCENARIO_1_INPUT, SCENARIO_2_INPUT, SCENARIO_3_INPUT, SCENARIO_4_INPUT, SCENARIO_5_INPUT,
+    SCENARIO_6_INPUT, SCENARIO_7_INPUT, SCENARIO_8_INPUT, SCENARIO_9_INPUT, SCENARIO_10_INPUT,
+    SCENARIO_11_INPUT, SCENARIO_12_INPUT, SCENARIO_13_INPUT, SCENARIO_14_INPUT, SCENARIO_15_INPUT,
+    SCENARIO_16_INPUT, SCENARIO_17_INPUT, STRICT_ABORT_PARTIAL_INPUT,
+    SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT, SUMMARY_COUNT_SUFFIX_FAMILY_INPUT,
+    SUMMARY_FRACTIONAL_COUNT_INPUT, SUMMARY_INFINITE_QUANTILE_INPUT, SUMMARY_NAN_QUANTILE_INPUT,
+    SUMMARY_NEGATIVE_COUNT_INPUT, SUMMARY_PERMUTED_LABELS_INPUT, SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
 };
 
-use common::{TestMode, parse, parse_strict};
+use common::{TestMode, modes, parse, parse_strict};
 
 fn family(
     name: &'static str,
@@ -1275,6 +1278,125 @@ fn strict_summary_on_permuted_label_order_should_pass_with_one_row() {
                 None,
                 None,
                 vec![(0.5, 1.0), (0.9, 2.0)],
+            )],
+        )],
+    );
+}
+
+// ================== aggregation rows on suffix-named families ===============
+// A family whose own name ends in _count/_sum is an exact match in Go's
+// setOrCreateCurrentMF: the count/sum flags stay false there, so the bare
+// name row folds as a quantile/bucket row, not as a count/sum row. The
+// fold runs ahead of every mode check, so all modes must land it.
+
+/// Mode-independent fold behavior: every mode must parse the input cleanly
+/// and land the same families.
+fn assert_scenario_passes_in_every_mode(input: &str, want: Vec<MetricFamily<'static>>) {
+    for (mode_name, mode) in modes() {
+        let (got, stats) = parse(input.as_bytes(), mode);
+        assert_eq!(
+            stats.last_error, None,
+            "{mode_name}: unexpected parse error"
+        );
+        assert_eq!(got, want, "{mode_name}");
+    }
+}
+
+#[test]
+fn summary_on_count_suffixed_family_name_should_keep_its_quantile_row_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_SUFFIX_FAMILY_INPUT,
+        vec![family(
+            "x_count",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(vec![], None, None, None, vec![(0.5, 3.0)])],
+        )],
+    );
+}
+
+#[test]
+fn summary_on_sum_suffixed_family_name_should_keep_its_quantile_row_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_SUM_SUFFIX_FAMILY_INPUT,
+        vec![family(
+            "x_sum",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(vec![], None, None, None, vec![(0.5, 3.0)])],
+        )],
+    );
+}
+
+#[test]
+fn histogram_on_count_suffixed_family_name_should_keep_its_bucket_row_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        HISTOGRAM_COUNT_SUFFIX_FAMILY_INPUT,
+        vec![family(
+            "x_count",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                None,
+                None,
+                vec![(1.0, IntOrFloat::Int(2))],
+            )],
+        )],
+    );
+}
+
+#[test]
+fn histogram_on_sum_suffixed_family_name_should_keep_its_bucket_row_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        HISTOGRAM_SUM_SUFFIX_FAMILY_INPUT,
+        vec![family(
+            "x_sum",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                None,
+                None,
+                vec![(1.0, IntOrFloat::Int(2))],
+            )],
+        )],
+    );
+}
+
+// Without a quantile the bare-name row still folds into an (empty) summary
+// row: Go builds Summary{} before the flag switch and appends nothing.
+#[test]
+fn summary_on_bare_row_in_count_suffixed_family_should_pass_with_an_empty_summary_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        SUMMARY_COUNT_SUFFIX_FAMILY_BARE_ROW_INPUT,
+        vec![family(
+            "x_count",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(vec![], None, None, None, vec![])],
+        )],
+    );
+}
+
+// Control: a family named with a _bucket suffix never touches the count/sum
+// flags, so its bare-name `le` row is a bucket row already.
+#[test]
+fn histogram_on_bucket_suffixed_family_name_should_keep_its_bucket_row_in_every_mode() {
+    assert_scenario_passes_in_every_mode(
+        HISTOGRAM_BUCKET_SUFFIX_FAMILY_INPUT,
+        vec![family(
+            "x_bucket",
+            MetricType::Histogram,
+            None,
+            vec![histogram_metric(
+                vec![],
+                None,
+                None,
+                None,
+                vec![(1.0, IntOrFloat::Int(2))],
             )],
         )],
     );
