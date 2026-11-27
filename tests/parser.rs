@@ -676,8 +676,15 @@ fn parser_is_waiting_tracks_the_cut_line_and_reset_folds_it() {
     merge_into(parser.parse_text(b"c 1\nc 2"), &mut families);
     // The cut line waits for its continuation.
     assert!(parser.is_waiting());
-    // reset ends the stream: the tail folds, nothing waits.
-    assert_eq!(parser.reset(), Ok(()));
+    // reset ends the stream: the tail folds, reports the truncation,
+    // nothing waits.
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 2,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     assert!(!parser.is_waiting());
 
     // The next call is a fresh stream: line numbering and stats restart.
@@ -769,12 +776,24 @@ fn parser_reset_should_fold_the_tail_lenient() {
     assert_eq!(families.len(), 1);
     assert_eq!(families[0].metrics.len(), 1);
     assert!(parser.is_waiting());
-    assert_eq!(parser.reset(), Ok(()));
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 2,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     let stats = parser.stats();
     assert_eq!(stats.lines_total, 2);
     assert_eq!(stats.metrics_total, 2);
     assert_eq!(stats.discarded_families, 1);
-    assert_eq!(stats.last_error, None);
+    assert_eq!(
+        stats.last_error,
+        Some(Error {
+            line: 2,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     assert!(!parser.is_waiting());
 }
 
@@ -794,7 +813,13 @@ fn parser_reset_should_fold_the_carried_aggregation_tail() {
         "the carry holds the open histogram back"
     );
     assert!(parser.is_waiting());
-    assert_eq!(parser.reset(), Ok(()));
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 4,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     let stats = parser.stats();
     assert_eq!(stats.lines_total, 4);
     // The histogram's rows fold into one model Metric, tail row included.
@@ -859,7 +884,14 @@ fn parser_reset_on_a_truncated_end_should_discard_the_held_family_with_the_tail(
         }),
         "strict",
     );
-    run(LenientMode, Ok(()), "lenient");
+    run(
+        LenientMode,
+        Err(Error {
+            line: 3,
+            kind: ErrorKind::UnexpectedEof,
+        }),
+        "lenient",
+    );
 }
 
 #[test]
@@ -900,6 +932,31 @@ fn parser_reset_strict_truncation_should_match_the_go_scenario() {
     );
     let (_, error) = parse_strict(input, Scheme::Legacy);
     assert_eq!(parser.stats().last_error, error);
+}
+
+#[test]
+fn parser_reset_lenient_truncation_should_match_the_go_scenario() {
+    // Go scenario 0 under lenient parsing: the unterminated final line
+    // reports at its own line number, the same as strict — a cut-off
+    // stream must stay detectable in every mode.
+    let input: &[u8] = b"\nbla 3.14\nblubber 42";
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(input), &mut families);
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 3,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
+    assert_eq!(
+        parser.stats().last_error,
+        Some(Error {
+            line: 3,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
 }
 
 #[test]
@@ -960,7 +1017,13 @@ fn parser_reset_should_count_only_the_tail_families_as_discarded() {
     assert_eq!(families[0].metrics.len(), 2);
     merge_into(parser.parse_text(b"c 3"), &mut families);
     assert_eq!(families.len(), 1, "the tail yields nothing mid-stream");
-    assert_eq!(parser.reset(), Ok(()));
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 3,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     let stats = parser.stats();
     assert_eq!(stats.lines_total, 3);
     assert_eq!(stats.metrics_total, 3);
@@ -972,7 +1035,13 @@ fn parser_reset_should_be_idempotent() {
     let mut parser = Parser::new(LenientMode);
     let mut families = Vec::new();
     merge_into(parser.parse_text(b"c 1\nc 2"), &mut families);
-    assert_eq!(parser.reset(), Ok(()));
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 2,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     let stats = parser.stats().clone();
     // A second reset finds nothing staged: the stats stay finalized.
     assert_eq!(parser.reset(), Ok(()));
@@ -1001,7 +1070,13 @@ fn parser_reset_stats_should_keep_the_chained_stream_state() {
     parser.reset_stats();
     assert_eq!(parser.stats(), &Stats::default());
 
-    assert_eq!(parser.reset(), Ok(()));
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 2,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
     let stats = parser.stats();
     assert_eq!(stats.lines_total, 2);
     assert_eq!(stats.metrics_total, 2);

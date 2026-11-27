@@ -485,7 +485,7 @@ fn text_parser_plain_family_should_split_and_merge_by_name() {
 }
 
 #[test]
-fn text_parser_truncated_tail_should_fold_at_finish_in_lenient() {
+fn text_parser_truncated_tail_should_error_at_finish_in_lenient() {
     let input: &[u8] = b"# TYPE t counter\nt 1";
     let (whole, whole_stats) = parse(input, TestMode::Lenient);
     let (families, stats) = collect_chunked(input, 7, TestMode::Lenient);
@@ -494,7 +494,10 @@ fn text_parser_truncated_tail_should_fold_at_finish_in_lenient() {
         sorted_by_name(whole),
         "the unterminated tail must fold at finish"
     );
-    assert_eq!(stats.last_error, None);
+    assert_eq!(stats.last_error, whole_stats.last_error);
+    let err = whole_stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 2);
+    assert!(matches!(err.kind, ErrorKind::UnexpectedEof));
     assert_eq!(stats.lines_total, whole_stats.lines_total);
 }
 

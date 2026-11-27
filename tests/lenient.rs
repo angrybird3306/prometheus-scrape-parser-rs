@@ -21,7 +21,7 @@
 
 mod common;
 
-use common::scenarios::scenario_inputs;
+use common::scenarios::{ERROR_SCENARIO_0_INPUT, scenario_inputs};
 use common::{TestMode, parse};
 use prometheus_scrape_parser_rs::{
     Bucket, ErrorKind, HistogramValue, IntOrFloat, MetricType, MetricValue,
@@ -56,14 +56,77 @@ fn strict_parse_on_scenarios_should_match_lenient_when_strict_passes() {
 }
 
 // Go error scenario "0: No new-line at end of input." fails strict parsing
-// with "unexpected end of input stream"; LenientMode accepts the truncated
-// last line.
+// with "unexpected end of input stream"; lenient parsing records the same
+// truncation instead of silently accepting a cut-off input.
 #[test]
-fn lenient_error_case_0_no_new_line_at_end_of_input_should_pass() {
-    let (got, _) = parse(b"metric_a 1", TestMode::Lenient);
+fn lenient_error_case_0_no_new_line_at_end_of_input_should_record_truncation_error() {
+    let (got, stats) = parse(b"metric_a 1", TestMode::Lenient);
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].name, "metric_a");
     assert_eq!(got[0].metrics[0].value, MetricValue::Sample(1.0));
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 1);
+    assert!(matches!(err.kind, ErrorKind::UnexpectedEof));
+}
+
+// The full scenario-0 input: the truncation reports at its own line number,
+// after both complete families have folded.
+#[test]
+fn lenient_error_case_0_truncated_after_complete_family_should_record_truncation_error() {
+    let (got, stats) = parse(ERROR_SCENARIO_0_INPUT.as_bytes(), TestMode::Lenient);
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].name, "bla");
+    assert_eq!(got[0].metrics[0].value, MetricValue::Sample(3.14));
+    assert_eq!(got[1].name, "blubber");
+    assert_eq!(got[1].metrics[0].value, MetricValue::Sample(42.0));
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 3);
+    assert!(matches!(err.kind, ErrorKind::UnexpectedEof));
+}
+
+// A truncated TYPE+sample tail records the truncation without dropping the
+// cleanly folded content.
+#[test]
+fn lenient_on_truncated_final_sample_should_record_truncation_error() {
+    let (got, stats) = parse(b"# TYPE t counter\nt 1", TestMode::Lenient);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "t");
+    assert_eq!(got[0].metrics.len(), 1);
+    assert_eq!(got[0].metrics[0].value, MetricValue::Sample(1.0));
+    assert_eq!(stats.lines_total, 2);
+    assert_eq!(stats.skipped_lines, 0);
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 2);
+    assert!(matches!(err.kind, ErrorKind::UnexpectedEof));
+}
+
+// A truncated comment tail is a non-blank partial line: it reports the
+// truncation too.
+#[test]
+fn lenient_on_truncated_final_comment_should_record_truncation_error() {
+    let (got, stats) = parse(b"m 1\n# c", TestMode::Lenient);
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].name, "m");
+    assert_eq!(got[0].metrics.len(), 1);
+    let err = stats.last_error.as_ref().unwrap();
+    assert_eq!(err.line, 2);
+    assert!(matches!(err.kind, ErrorKind::UnexpectedEof));
+}
+
+// A blank-only unterminated tail ends cleanly in every mode: EOF at the
+// start of a line is not an error (mirroring Go).
+#[test]
+fn blank_only_truncated_tail_should_end_cleanly_in_every_mode() {
+    for input in [&b"m 1\n  "[..], &b"m 1\n\t"[..], &b"m 1\n\n"[..]] {
+        for mode in [
+            TestMode::Lenient,
+            TestMode::StrictUtf8,
+            TestMode::StrictLegacy,
+        ] {
+            let (_, stats) = parse(input, mode);
+            assert!(stats.last_error.is_none(), "blank tail must not error");
+        }
+    }
 }
 
 // Fractional timestamps truncate to whole milliseconds.
