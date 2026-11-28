@@ -81,6 +81,9 @@ pub enum LineView<'a> {
 pub struct SampleLine<'a> {
     pub name: Token<'a>,
     pub labels: Vec<Label<'a>>,
+    /// Every label name came off the unquoted fast path: the character
+    /// class is proven, strict mode skips its per-label re-scan.
+    pub labels_plain: bool,
     pub value: f64,
     /// Raw timestamp token; LenientMode additionally tolerates fractional
     /// values by truncating to whole milliseconds.
@@ -684,6 +687,7 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
 ) -> Result<LineView<'l>, LexError> {
     let mut name: Option<Token<'l>> = None;
     let mut name_inside = false;
+    let mut labels_plain = true;
     let err = |e: ErrorKind| LexError::new(e);
     if !started_with_brace {
         let tok = lx.read_name(true, true, scratch).map_err(err)?;
@@ -717,6 +721,7 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
             let utf8_metric = started_with_brace && name.is_none() && !name_inside;
             let label_name = lx.read_name(false, utf8_metric, scratch).map_err(err)?;
             check_escape(&label_name, scheme).map_err(err)?;
+            labels_plain &= label_name.plain;
             if label_name.decoded.is_empty() {
                 return Err(err(ErrorKind::InvalidLabelNameForMetric {
                     family: name
@@ -860,6 +865,7 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
     Ok(LineView::Sample(SampleLine {
         name,
         labels: std::mem::take(labels),
+        labels_plain,
         value,
         timestamp_raw,
     }))

@@ -157,33 +157,40 @@ impl Mode for StrictMode {
                 let target = resolve_family_name(&name.decoded, |n| {
                     self.families.get(n).map(|st| st.metric_type)
                 });
-                if !self.families.contains_key(target) {
-                    self.families
-                        .insert(target.to_string(), FamilyState::default());
-                }
-                if self.families[target].help_info_captured {
+                let st = match self.families.get_mut(target) {
+                    Some(st) => st,
+                    None => {
+                        self.families
+                            .insert(target.to_string(), FamilyState::default());
+                        self.families.get_mut(target).unwrap()
+                    }
+                };
+                if st.help_info_captured {
                     return Err(at(ErrorKind::SecondHelpLine {
                         name: target.to_string(),
                     }));
                 }
-                self.families.get_mut(target).unwrap().help_info_captured = true;
+                st.help_info_captured = true;
                 Ok(())
             }
             LineView::Type { name, metric_type } => {
                 let target = resolve_family_name(&name.decoded, |n| {
                     self.families.get(n).map(|st| st.metric_type)
                 });
-                if !self.families.contains_key(target) {
-                    self.families
-                        .insert(target.to_string(), FamilyState::default());
-                }
-                let st = self.families[target];
+                let st = match self.families.get_mut(target) {
+                    Some(st) => st,
+                    None => {
+                        self.families
+                            .insert(target.to_string(), FamilyState::default());
+                        self.families.get_mut(target).unwrap()
+                    }
+                };
                 if st.metric_type.is_some() || st.sample {
                     return Err(at(ErrorKind::SecondTypeLine {
                         name: target.to_string(),
                     }));
                 }
-                self.families.get_mut(target).unwrap().metric_type = Some(*metric_type);
+                st.metric_type = Some(*metric_type);
                 Ok(())
             }
             LineView::Sample(s) => {
@@ -191,7 +198,9 @@ impl Mode for StrictMode {
                     if l.name == "__name__" {
                         return Err(at(ErrorKind::ReservedLabelName));
                     }
-                    if !self.scheme.is_valid_label_name(&l.name) {
+                    // A plain label set's character class was proven by the
+                    // name scan; only the reserved-name rule still applies.
+                    if !s.labels_plain && !self.scheme.is_valid_label_name(&l.name) {
                         return Err(at(ErrorKind::InvalidLabelNameQuoted {
                             name: l.name.to_string(),
                         }));
@@ -200,11 +209,14 @@ impl Mode for StrictMode {
                 let target = resolve_family_name(&s.name.decoded, |n| {
                     self.families.get(n).map(|st| st.metric_type)
                 });
-                if !self.families.contains_key(target) {
-                    self.families
-                        .insert(target.to_string(), FamilyState::default());
-                }
-                let st = self.families.get_mut(target).unwrap();
+                let st = match self.families.get_mut(target) {
+                    Some(st) => st,
+                    None => {
+                        self.families
+                            .insert(target.to_string(), FamilyState::default());
+                        self.families.get_mut(target).unwrap()
+                    }
+                };
                 st.sample = true;
                 st.metric_type.get_or_insert(MetricType::Untyped);
                 Ok(())
