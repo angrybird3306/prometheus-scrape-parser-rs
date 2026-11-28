@@ -45,7 +45,7 @@ pub fn owned_family<'a, F: MetricFamilyView<'a>>(family: &F) -> MetricFamily<'st
                     })
                     .collect(),
                 timestamp: metric.timestamp(),
-                value: metric.value(),
+                value: metric.value().to_owned_value(),
             })
             .collect(),
     }

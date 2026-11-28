@@ -25,6 +25,7 @@ mod lexer;
 mod mode;
 mod model;
 mod parse_proto;
+mod view;
 mod parse_text;
 mod parser;
 pub mod proto;
@@ -37,6 +38,7 @@ pub use crate::model::{
     Bucket, HistogramValue, IntOrFloat, Label, Metric, MetricFamily, MetricType, MetricValue,
     Quantile, SummaryValue,
 };
+pub use crate::view::{BucketsRef, HistogramValueRef, MetricValueRef, QuantilesRef, SummaryValueRef};
 pub use crate::parse_proto::{ProtoBufParser, ProtoFamily, ProtoFamilyView, ProtoMetricView};
 pub use crate::parse_text::{StageArea, TextParser};
 pub use crate::parser::Parser;
@@ -117,7 +119,7 @@ pub trait MetricFamilyView<'a> {
 pub trait MetricView<'a> {
     fn labels(&self) -> impl Iterator<Item = LabelView<'a>>;
     fn timestamp(&self) -> Option<i64>;
-    fn value(&self) -> MetricValue;
+    fn value(&self) -> MetricValueRef<'_>;
 }
 
 /// One label pair as a read view. Both formats' fast paths borrow the
@@ -142,7 +144,7 @@ where
         (**self).timestamp()
     }
 
-    fn value(&self) -> MetricValue {
+    fn value(&self) -> MetricValueRef<'_> {
         (**self).value()
     }
 }

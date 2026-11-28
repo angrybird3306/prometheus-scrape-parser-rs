@@ -25,8 +25,10 @@ use buffa::MessageView;
 use crate::Stats;
 use crate::error::{Error, ErrorKind};
 use crate::model::{
-    Bucket, HistogramValue, IntOrFloat, Label, Metric, MetricFamily, MetricType, MetricValue,
-    Quantile, SummaryValue,
+    IntOrFloat, Label, Metric, MetricFamily, MetricType,
+};
+use crate::view::{
+    BucketsRef, HistogramValueRef, MetricValueRef, QuantilesRef, SummaryValueRef,
 };
 use crate::{LabelView, MetricFamilyView, MetricView};
 
@@ -401,7 +403,10 @@ impl<'a> MetricFamilyView<'a> for ProtoFamily<'a> {
         match self {
             Self::Wire(view) => ProtoMetricsIter::Wire(WireMetrics {
                 view: &view.view,
-                indices: view.valid.iter(),
+                indices: match &view.valid {
+                    ValidMetrics::All => ValidIndices::All(view.view.metric.iter()),
+                    ValidMetrics::Sparse(valid) => ValidIndices::Sparse(valid.iter()),
+                },
                 proto_type: view.proto_type,
             }),
             Self::Owned(family) => ProtoMetricsIter::Owned(family.metrics.iter()),
@@ -449,10 +454,10 @@ impl<'a> MetricView<'a> for ProtoFamilyMetric<'a, '_> {
         }
     }
 
-    fn value(&self) -> MetricValue {
+    fn value(&self) -> MetricValueRef<'_> {
         match self {
             Self::Wire(metric) => metric.value(),
-            Self::Owned(metric) => metric.value.clone(),
+            Self::Owned(metric) => MetricValueRef::from(&metric.value),
         }
     }
 }
@@ -486,7 +491,16 @@ impl<'a, 'm> Iterator for ProtoLabels<'a, 'm> {
 pub struct ProtoFamilyView<'a> {
     view: dto::MetricFamilyView<'a>,
     proto_type: ProtoType,
-    valid: Vec<usize>,
+    valid: ValidMetrics,
+}
+
+/// Which Metric entries of the message are convertible. Whole validity —
+/// the overwhelmingly common case for a well-formed scrape — needs no
+/// index bookkeeping at all.
+#[derive(Clone, Debug)]
+enum ValidMetrics {
+    All,
+    Sparse(Vec<usize>),
 }
 
 impl<'a> ProtoFamilyView<'a> {
@@ -499,13 +513,17 @@ impl<'a> ProtoFamilyView<'a> {
         proto_type: ProtoType,
         stats: &mut Stats,
     ) -> Option<Self> {
-        let mut valid = Vec::with_capacity(view.metric.len());
+        let mut all = true;
+        let mut valid = 0usize;
+        let mut sparse = Vec::new();
         for (i, metric) in view.metric.iter().enumerate() {
             if has_value(metric, proto_type) {
                 stats.metrics_total += 1;
-                valid.push(i);
+                valid += 1;
             } else {
+                all = false;
                 stats.skipped_metrics += 1;
+                sparse.push(i);
                 stats.last_error = Some(Error {
                     line: stats.metrics_total + stats.skipped_metrics,
                     kind: ErrorKind::MissingMetricValue {
@@ -514,10 +532,15 @@ impl<'a> ProtoFamilyView<'a> {
                 });
             }
         }
-        if valid.is_empty() && !view.metric.is_empty() {
+        if valid == 0 && !view.metric.is_empty() {
             stats.pruned_families += 1;
             return None;
         }
+        let valid = if all {
+            ValidMetrics::All
+        } else {
+            ValidMetrics::Sparse(sparse)
+        };
         Some(Self {
             view,
             proto_type,
@@ -544,7 +567,7 @@ impl<'a> ProtoFamilyView<'a> {
                         })
                         .collect(),
                     timestamp: metric.timestamp(),
-                    value: metric.value(),
+                    value: metric.value().to_owned_value(),
                 })
                 .collect(),
         }
@@ -570,13 +593,19 @@ impl<'a> MetricFamilyView<'a> for ProtoFamilyView<'a> {
     }
 
     fn metric_count(&self) -> usize {
-        self.valid.len()
+        match &self.valid {
+            ValidMetrics::All => self.view.metric.len(),
+            ValidMetrics::Sparse(valid) => valid.len(),
+        }
     }
 
     fn metrics<'m>(&'m self) -> impl Iterator<Item = Self::Metric<'m>> {
         WireMetrics {
             view: &self.view,
-            indices: self.valid.iter(),
+            indices: match &self.valid {
+                ValidMetrics::All => ValidIndices::All(self.view.metric.iter()),
+                ValidMetrics::Sparse(valid) => ValidIndices::Sparse(valid.iter()),
+            },
             proto_type: self.proto_type,
         }
     }
@@ -603,25 +632,35 @@ impl<'a> MetricView<'a> for ProtoMetricView<'a, '_> {
         (self.metric.timestamp_ms != 0).then_some(self.metric.timestamp_ms)
     }
 
-    fn value(&self) -> MetricValue {
-        metric_value_of(self.metric, self.proto_type).expect("value field validated at build")
+    fn value(&self) -> MetricValueRef<'_> {
+        metric_value_ref_of(self.metric, self.proto_type).expect("value field validated at build")
     }
 }
 
 /// Iterates a [`ProtoFamilyView`]'s convertible dto metrics by index.
 struct WireMetrics<'a, 'm> {
     view: &'m dto::MetricFamilyView<'a>,
-    indices: std::slice::Iter<'m, usize>,
+    indices: ValidIndices<'a, 'm>,
     proto_type: ProtoType,
+}
+
+/// Walks either the message's own metrics (whole validity) or the sparse
+/// index list the build scan recorded.
+enum ValidIndices<'a, 'm> {
+    All(std::slice::Iter<'m, dto::MetricView<'a>>),
+    Sparse(std::slice::Iter<'m, usize>),
 }
 
 impl<'a, 'm> Iterator for WireMetrics<'a, 'm> {
     type Item = ProtoMetricView<'a, 'm>;
 
     fn next(&mut self) -> Option<ProtoMetricView<'a, 'm>> {
-        let &i = self.indices.next()?;
+        let metric = match &mut self.indices {
+            ValidIndices::All(iter) => iter.next()?,
+            ValidIndices::Sparse(iter) => &self.view.metric[*iter.next()?],
+        };
         Some(ProtoMetricView {
-            metric: &self.view.metric[i],
+            metric,
             proto_type: self.proto_type,
         })
     }
@@ -659,47 +698,31 @@ fn has_value(metric: &dto::MetricView<'_>, proto_type: ProtoType) -> bool {
 /// The dto value field the family type names, with the dto's int/float
 /// twin rule for histogram counts; `None` = the metric carries no value
 /// field matching its family type.
-fn metric_value_of(metric: &dto::MetricView<'_>, proto_type: ProtoType) -> Option<MetricValue> {
+fn metric_value_ref_of<'a, 'm>(
+    metric: &'m dto::MetricView<'a>,
+    proto_type: ProtoType,
+) -> Option<MetricValueRef<'m>> {
     match proto_type {
-        ProtoType::COUNTER => metric
-            .counter
-            .as_option()
-            .map(|v| MetricValue::Sample(v.value)),
-        ProtoType::GAUGE => metric
-            .gauge
-            .as_option()
-            .map(|v| MetricValue::Sample(v.value)),
-        ProtoType::UNTYPED => metric
-            .untyped
-            .as_option()
-            .map(|v| MetricValue::Sample(v.value)),
+        ProtoType::COUNTER => {
+            metric.counter.as_option().map(|v| MetricValueRef::Sample(v.value))
+        }
+        ProtoType::GAUGE => metric.gauge.as_option().map(|v| MetricValueRef::Sample(v.value)),
+        ProtoType::UNTYPED => {
+            metric.untyped.as_option().map(|v| MetricValueRef::Sample(v.value))
+        }
         ProtoType::SUMMARY => metric.summary.as_option().map(|s| {
-            MetricValue::Summary(SummaryValue {
+            MetricValueRef::Summary(SummaryValueRef {
                 sample_count: Some(s.sample_count),
                 sample_sum: Some(s.sample_sum),
-                quantiles: s
-                    .quantile
-                    .iter()
-                    .map(|q| Quantile {
-                        quantile: q.quantile,
-                        value: q.value,
-                    })
-                    .collect(),
+                quantiles: QuantilesRef::Wire(&s.quantile),
             })
         }),
         ProtoType::HISTOGRAM | ProtoType::GAUGE_HISTOGRAM => {
             metric.histogram.as_option().map(|h| {
-                MetricValue::Histogram(HistogramValue {
+                MetricValueRef::Histogram(HistogramValueRef {
                     sample_count: Some(count(h.sample_count, h.sample_count_float)),
                     sample_sum: Some(h.sample_sum),
-                    buckets: h
-                        .bucket
-                        .iter()
-                        .map(|b| Bucket {
-                            upper_bound: b.upper_bound,
-                            cumulative_count: count(b.cumulative_count, b.cumulative_count_float),
-                        })
-                        .collect(),
+                    buckets: BucketsRef::Wire(&h.bucket),
                 })
             })
         }

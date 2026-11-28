@@ -215,7 +215,7 @@ impl<'a> crate::MetricView<'a> for Metric<'a> {
         self.timestamp
     }
 
-    fn value(&self) -> MetricValue {
-        self.value.clone()
+    fn value(&self) -> crate::view::MetricValueRef<'_> {
+        crate::view::MetricValueRef::from(&self.value)
     }
 }
