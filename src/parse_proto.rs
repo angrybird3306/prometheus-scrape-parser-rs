@@ -36,6 +36,9 @@ pub struct ProtoBufParser {
     pending: Vec<u8>,
     /// 1-based ordinal of the last attempted message, stream-global.
     message_no: u64,
+    /// A malformed length prefix desynced the framing: no message parses
+    /// until [`reset`](Self::reset) starts a fresh stream.
+    stopped: bool,
     stats: Stats,
 }
 
@@ -50,6 +53,7 @@ impl ProtoBufParser {
         Self {
             pending: Vec::new(),
             message_no: 0,
+            stopped: false,
             stats: Stats::default(),
         }
     }
@@ -58,7 +62,10 @@ impl ProtoBufParser {
     /// every message it completes. Failures skip the offending message or
     /// metric, record into [`stats`](Self::stats), and the loop continues
     /// — `None` means this chunk is exhausted (possibly mid-message; see
-    /// [`is_waiting`](Self::is_waiting)), not that an error occurred.
+    /// [`is_waiting`](Self::is_waiting)), not that an error occurred. A
+    /// malformed length prefix desyncs the framing: the rest of the chunk
+    /// drops, the parser stops, and only [`reset`](Self::reset) starts a
+    /// fresh stream — a later chunk is not a fresh message stream.
     pub fn parse<'a>(&mut self, buf: &'a [u8]) -> impl Iterator<Item = ProtoFamily<'a>> {
         ProtoIter::new(self, buf)
     }
@@ -81,11 +88,11 @@ impl ProtoBufParser {
         !self.pending.is_empty()
     }
 
-    /// Discards the staged partial message and the accumulated stats; the
-    /// next [`parse`](Self::parse) call starts a fresh stream. Staged
-    /// buffer capacity is kept. `Some` reports the staged partial as the
-    /// truncation it now turns out to be, at the ordinal it would have
-    /// completed under.
+    /// Discards the staged partial message, the accumulated stats and a
+    /// framing stop; the next [`parse`](Self::parse) call starts a fresh
+    /// stream. Staged buffer capacity is kept. `Some` reports the staged
+    /// partial as the truncation it now turns out to be, at the ordinal
+    /// it would have completed under.
     pub fn reset(&mut self) -> Option<Error> {
         let truncated = (!self.pending.is_empty()).then(|| Error {
             line: self.message_no + 1,
@@ -95,6 +102,7 @@ impl ProtoBufParser {
         });
         self.pending.clear();
         self.message_no = 0;
+        self.stopped = false;
         self.stats = Stats::default();
         truncated
     }
@@ -103,8 +111,9 @@ impl ProtoBufParser {
         &self.stats
     }
 
-    /// Clears the accumulated stats, keeping the staged partial message
-    /// and the message numbering: counting restarts from the clear.
+    /// Clears the accumulated stats, keeping the staged partial message,
+    /// the message numbering and the framing stop: counting restarts from
+    /// the clear.
     pub fn reset_stats(&mut self) {
         self.stats = Stats::default();
     }
@@ -186,6 +195,7 @@ impl<'a, 'p> ProtoIter<'a, 'p> {
             pending,
             message_no,
             stats,
+            ..
         } = &mut self.parser;
         *message_no += 1;
         let line = *message_no;
@@ -225,11 +235,19 @@ impl<'a> Iterator for ProtoIter<'a, '_> {
             if self.done {
                 return None;
             }
+            if self.parser.stopped {
+                // A malformed length prefix stopped the parser: no chunk
+                // parses until reset. The error is already recorded.
+                self.done = true;
+                self.sync_sink();
+                return None;
+            }
 
             if !self.parser.pending.is_empty() {
                 match read_length_prefix(&self.parser.pending) {
                     Prefix::Malformed => {
                         self.parser.pending.clear();
+                        self.parser.stopped = true;
                         self.parser.record_message_error("malformed length prefix");
                         self.done = true;
                         self.sync_sink();
@@ -275,6 +293,7 @@ impl<'a> Iterator for ProtoIter<'a, '_> {
             match read_length_prefix(&buf[self.pos..]) {
                 Prefix::Malformed => {
                     self.pos = buf.len();
+                    self.parser.stopped = true;
                     self.parser.record_message_error("malformed length prefix");
                     self.done = true;
                     self.sync_sink();

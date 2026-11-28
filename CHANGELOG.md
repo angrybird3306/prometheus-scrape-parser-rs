@@ -19,6 +19,7 @@ Fixed:
 - fix: yield complete family before staging truncated line
 - fix: yield complete family for interleaved histogram & summary
 - fix: reset_stats should clear internal states as well
+- fix: parse segarated protobuf inputs
 
 Added:
 - feat: more accurate error messages
