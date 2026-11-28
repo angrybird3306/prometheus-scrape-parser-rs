@@ -326,6 +326,96 @@ fn parser_text_blank_and_comment_lines_should_not_break_the_hold() {
     assert_eq!(histogram.buckets.len(), 1);
 }
 
+#[test]
+fn parser_text_complete_aggregation_family_yields_despite_a_staged_unrelated_tail() {
+    // The staged cut line may continue the last family, so the boundary
+    // carries it — but a whole sample group is dead to a differently
+    // named row: the complete family yields, only the tail's own family
+    // folds at reset.
+    let input = b"# TYPE h histogram\n\
+                  h_bucket{le=\"+Inf\"} 1\n\
+                  h_count 2\n\
+                  h_sum 3\n\
+                  g 1";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(input), &mut families);
+    assert_eq!(families.len(), 1, "the complete family must not hold");
+    assert_eq!(families[0].name.as_ref(), "h");
+    assert_eq!(families[0].metric_type, MetricType::Histogram);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(2)));
+    assert_eq!(histogram.sample_sum, Some(3.0));
+    assert_eq!(
+        histogram
+            .buckets
+            .iter()
+            .map(|b| (b.upper_bound, b.cumulative_count))
+            .collect::<Vec<_>>(),
+        [(f64::INFINITY, IntOrFloat::Int(1))]
+    );
+
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 5,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 5);
+    assert_eq!(stats.metrics_total, 2);
+    assert_eq!(stats.discarded_families, 1, "only the tail's own family");
+    assert_eq!(
+        stats.last_error,
+        Some(Error {
+            line: 5,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
+    assert!(!parser.is_waiting());
+}
+
+#[test]
+fn parser_text_complete_aggregation_family_yields_across_chunks_despite_a_staged_tail() {
+    // The hold spans chunks while the group gathers; once whole, the
+    // family yields even though a staged cut line sits behind it.
+    let part1 = b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n";
+    let part2 = b"h_count 2\nh_sum 3\ng 1";
+
+    let mut parser = Parser::new(StrictMode::legacy());
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(part1), &mut families);
+    assert!(
+        families.is_empty(),
+        "the sample group is missing count and sum"
+    );
+    merge_into(parser.parse_text(part2), &mut families);
+    assert_eq!(families.len(), 1, "the whole group must not hold");
+    assert_eq!(families[0].metric_type, MetricType::Histogram);
+    let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+        panic!("the family must hold the histogram");
+    };
+    assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(2)));
+    assert_eq!(histogram.sample_sum, Some(3.0));
+
+    assert_eq!(
+        parser.reset(),
+        Err(Error {
+            line: 5,
+            kind: ErrorKind::UnexpectedEof,
+        })
+    );
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 5);
+    assert_eq!(stats.metrics_total, 2);
+    assert_eq!(stats.discarded_families, 1, "only the tail's own family");
+    assert!(!parser.is_waiting());
+}
+
 /// Offsets just past every newline, the clean line boundaries of a
 /// payload.
 fn line_boundaries(input: &[u8]) -> Vec<usize> {
@@ -558,6 +648,37 @@ fn parser_lenient_lex_error_should_drop_the_line_without_a_fragment() {
     assert_eq!(stats.skipped_families, 0);
     assert_eq!(stats.discarded_families, 0);
     assert_eq!(stats.metrics_total, 0);
+}
+
+#[test]
+fn parser_lenient_skipped_last_row_keeps_the_half_group_discarded_at_reset() {
+    // The count row skips and the group never turns whole: the held
+    // family discards at reset — half data at the stream end yields
+    // nothing rather than a fragment.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(
+        parser.parse_text(b"# TYPE h histogram\nh_bucket{le=\"1\"} 1\nh_count bad\n"),
+        &mut families,
+    );
+    assert!(families.is_empty(), "the group is missing its count");
+    assert_eq!(parser.reset(), Ok(()));
+
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 3);
+    assert_eq!(stats.metrics_total, 1);
+    assert_eq!(stats.discarded_families, 1);
+    assert_eq!(stats.skipped_lines, 1);
+    assert_eq!(
+        stats.last_error,
+        Some(Error {
+            line: 3,
+            kind: ErrorKind::ExpectedFloatValue {
+                got: "bad".to_owned(),
+            },
+        })
+    );
+    assert!(!parser.is_waiting());
 }
 
 #[test]
@@ -837,16 +958,15 @@ fn parser_reset_should_fold_the_carried_aggregation_tail() {
 
 #[test]
 fn parser_reset_on_a_clean_end_should_discard_a_family_still_gathering_its_sample_group() {
-    // The stream ends on a line boundary while the histogram still
-    // gathers: rows never yield half a sample group, the family counts
-    // into discarded_families.
-    fn run<M: Mode>(mode: M, what: &str) {
+    // The stream ends on a line boundary while the family still gathers:
+    // rows never yield half a sample group, the family counts into
+    // discarded_families. The batch TextParser::finish yields such
+    // partials instead — the streaming hold exists so a later chunk can
+    // still complete the group, and at the stream end nobody can.
+    fn run<M: Mode>(mode: M, input: &[u8], what: &str) {
         let mut parser = Parser::new(mode);
         let mut families = Vec::new();
-        merge_into(
-            parser.parse_text(b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n"),
-            &mut families,
-        );
+        merge_into(parser.parse_text(input), &mut families);
         assert!(families.is_empty(), "{what}: the incomplete family holds");
         assert_eq!(parser.reset(), Ok(()), "{what}");
         let stats = parser.stats();
@@ -859,9 +979,36 @@ fn parser_reset_on_a_clean_end_should_discard_a_family_still_gathering_its_sampl
         assert_eq!(stats.last_error, None, "{what}");
         assert!(!parser.is_waiting());
     }
-    run(LenientMode, "lenient");
-    run(StrictMode::legacy(), "strict-legacy");
-    run(StrictMode::utf8(), "strict-utf8");
+    run(
+        LenientMode,
+        b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n",
+        "lenient histogram",
+    );
+    run(
+        StrictMode::legacy(),
+        b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n",
+        "strict-legacy histogram",
+    );
+    run(
+        StrictMode::utf8(),
+        b"# TYPE h histogram\nh_bucket{le=\"+Inf\"} 1\n",
+        "strict-utf8 histogram",
+    );
+    run(
+        LenientMode,
+        b"# TYPE s summary\ns{quantile=\"0.5\"} 1\n",
+        "lenient summary",
+    );
+    run(
+        StrictMode::legacy(),
+        b"# TYPE s summary\ns{quantile=\"0.5\"} 1\n",
+        "strict-legacy summary",
+    );
+    run(
+        StrictMode::utf8(),
+        b"# TYPE s summary\ns{quantile=\"0.5\"} 1\n",
+        "strict-utf8 summary",
+    );
 }
 
 #[test]
