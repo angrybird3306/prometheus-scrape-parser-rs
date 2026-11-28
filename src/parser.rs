@@ -59,6 +59,8 @@ impl<M: Mode> Parser<M> {
     /// stream — its validation state chains across calls, so
     /// `StrictMode`'s per-family rules hold exactly over a chunked feed.
     /// End the stream with [`reset`](Self::reset). Families borrow `buf`.
+    /// Dropping the iterator before it runs dry discards the families the
+    /// chunk still holds; the stats and the staged state survive.
     pub fn parse_text<'a>(&mut self, buf: &'a [u8]) -> impl Iterator<Item = MetricFamily<'a>> {
         let stage = self.stage.take().unwrap_or_default();
         let mode = self
