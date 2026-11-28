@@ -14,8 +14,9 @@
 // limitations under the License.
 
 use std::borrow::Cow;
+use std::hash::Hasher;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 
 use crate::error::ErrorKind;
 use crate::lexer::{SampleLine, Token, parse_float_token};
@@ -103,6 +104,10 @@ struct PendingMetricFamily<'a> {
     help: Option<Cow<'a, str>>,
     metric_type: Option<MetricType>,
     metrics: Vec<Metric<'a>>,
+    /// Aggregation families: label-set signature -> row index. A pure
+    /// accelerator — every hit is verified exactly, misses fall back to
+    /// the linear scan, so correctness never depends on it.
+    rows: FxHashMap<u64, usize>,
 }
 
 impl<'a> From<PendingMetricFamily<'a>> for MetricFamily<'a> {
@@ -176,8 +181,9 @@ fn histogram_count(value: f64) -> Result<IntOrFloat, ()> {
 
 /// Whether a stripped label set names the same aggregation row as an
 /// existing metric's labels: equal sizes and equal canonical (sorted) pair
-/// streams, input order insignificant. Allocation-free; the linear scan
-/// mirrors Go's summary/histogram row merge.
+/// streams, input order insignificant. Allocation-free; the exact fallback
+/// behind the signature index (`label_signature` mirrors Go's
+/// LabelsToSignature row merge).
 fn same_label_set(stored: &[Label<'_>], probe: &[Label<'_>]) -> bool {
     stored.len() == probe.len()
         && (0..stored.len()).all(|rank| pair_at(stored, rank) == pair_at(probe, rank))
@@ -215,6 +221,36 @@ fn ranked_pair_at<'b>(
         }
     }
     unreachable!("rank within 0..len");
+}
+
+/// Order-insensitive hash of a label set (Go's LabelsToSignature shape):
+/// per-pair name and value hashes mixed and summed, so input order never
+/// changes the signature. Collisions are allowed; the exact
+/// [`label_sets_equal`] check gates every index hit.
+fn label_signature(labels: &[Label<'_>]) -> u64 {
+    let mut sig = 0u64;
+    for l in labels {
+        let mut h = FxHasher::default();
+        h.write(l.name.as_bytes());
+        h.write_u8(0xff);
+        let n = h.finish();
+        let mut h = FxHasher::default();
+        h.write(l.value.as_bytes());
+        h.write_u8(0xff);
+        sig = sig.wrapping_add(n.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ h.finish().rotate_left(23));
+    }
+    sig
+}
+
+/// Exact label-set equality; the same-order case is a linear compare,
+/// different orders fall to the canonical sorted compare.
+fn label_sets_equal(stored: &[Label<'_>], probe: &[Label<'_>]) -> bool {
+    stored.len() == probe.len()
+        && (stored
+            .iter()
+            .zip(probe)
+            .all(|(a, b)| a.name == b.name && a.value == b.value)
+            || same_label_set(stored, probe))
 }
 
 fn duplicate_label_names(labels: &[Label<'_>]) -> bool {
@@ -378,6 +414,7 @@ impl<'a> Assembler<'a> {
             help: seed.as_ref().and_then(|m| m.help.clone()),
             metric_type: seed.and_then(|m| m.metric_type),
             metrics: Vec::new(),
+            rows: FxHashMap::default(),
         });
         // Insert is idempotent: the shadow crosses instances while the
         // index is per-instance, so a family re-created in a later
@@ -533,20 +570,33 @@ impl<'a> Assembler<'a> {
         };
         // Only aggregation rows merge.
         let row_idx = {
+            let sig = label_signature(rest);
             let fam = &mut self.pending_metric_families[idx];
-            match fam.metrics.iter().position(|m| {
-                matches!(m.value, MetricValue::Summary(_)) && same_label_set(&m.labels, rest)
-            }) {
+            let known = fam.rows.get(&sig).copied().filter(|&r| {
+                matches!(fam.metrics[r].value, MetricValue::Summary(_))
+                    && label_sets_equal(&fam.metrics[r].labels, rest)
+            });
+            match known {
                 Some(r) => r,
-                None => {
-                    self.created_metrics += 1;
-                    fam.metrics.push(Metric {
-                        labels: std::mem::take(&mut sample.labels),
-                        timestamp: None,
-                        value: MetricValue::Summary(SummaryValue::default()),
-                    });
-                    fam.metrics.len() - 1
-                }
+                None => match fam.metrics.iter().position(|m| {
+                    matches!(m.value, MetricValue::Summary(_)) && same_label_set(&m.labels, rest)
+                }) {
+                    Some(r) => {
+                        fam.rows.insert(sig, r);
+                        r
+                    }
+                    None => {
+                        self.created_metrics += 1;
+                        fam.metrics.push(Metric {
+                            labels: std::mem::take(&mut sample.labels),
+                            timestamp: None,
+                            value: MetricValue::Summary(SummaryValue::default()),
+                        });
+                        let r = fam.metrics.len() - 1;
+                        fam.rows.insert(sig, r);
+                        r
+                    }
+                },
             }
         };
         let family_name = &self.pending_metric_families[idx].name;
@@ -604,20 +654,33 @@ impl<'a> Assembler<'a> {
         };
         // Only aggregation rows merge.
         let row_idx = {
+            let sig = label_signature(rest);
             let fam = &mut self.pending_metric_families[idx];
-            match fam.metrics.iter().position(|m| {
-                matches!(m.value, MetricValue::Histogram(_)) && same_label_set(&m.labels, rest)
-            }) {
+            let known = fam.rows.get(&sig).copied().filter(|&r| {
+                matches!(fam.metrics[r].value, MetricValue::Histogram(_))
+                    && label_sets_equal(&fam.metrics[r].labels, rest)
+            });
+            match known {
                 Some(r) => r,
-                None => {
-                    self.created_metrics += 1;
-                    fam.metrics.push(Metric {
-                        labels: std::mem::take(&mut sample.labels),
-                        timestamp: None,
-                        value: MetricValue::Histogram(HistogramValue::default()),
-                    });
-                    fam.metrics.len() - 1
-                }
+                None => match fam.metrics.iter().position(|m| {
+                    matches!(m.value, MetricValue::Histogram(_)) && same_label_set(&m.labels, rest)
+                }) {
+                    Some(r) => {
+                        fam.rows.insert(sig, r);
+                        r
+                    }
+                    None => {
+                        self.created_metrics += 1;
+                        fam.metrics.push(Metric {
+                            labels: std::mem::take(&mut sample.labels),
+                            timestamp: None,
+                            value: MetricValue::Histogram(HistogramValue::default()),
+                        });
+                        let r = fam.metrics.len() - 1;
+                        fam.rows.insert(sig, r);
+                        r
+                    }
+                },
             }
         };
         let family_name = &self.pending_metric_families[idx].name;
@@ -831,6 +894,9 @@ impl<'a> Assembler<'a> {
             help: family.help,
             metric_type: Some(family.metric_type),
             metrics: family.metrics,
+            // The carried family's rows rebuild lazily: the first probe
+            // per label set falls back to the scan and backfills.
+            rows: FxHashMap::default(),
         });
         self.index.insert(name, i);
     }
