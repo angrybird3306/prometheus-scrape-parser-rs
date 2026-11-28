@@ -20,8 +20,9 @@
 mod common;
 
 use common::{
-    AGGREGATES, CROSS_FAMILY, TestMode, merge_by_name, merge_instances_by_name,
-    mid_row_cut_histogram, modes, owned, parse, parse_strict, rows_whole, sorted_by_name,
+    AGGREGATES, CROSS_FAMILY, INTERLEAVED_AGGREGATES, TestMode, merge_by_name,
+    merge_instances_by_name, mid_row_cut_histogram, modes, owned, parse, parse_strict, rows_whole,
+    sorted_by_name,
 };
 use prometheus_scrape_parser_rs::{
     Error, ErrorKind, IntOrFloat, LenientMode, MetricFamily, MetricFamilyView, MetricType,
@@ -72,8 +73,10 @@ fn merge_view_into<'a, F: MetricFamilyView<'a>>(
 
 #[test]
 fn parser_text_chunked_chain_equals_whole_reference() {
-    for payload in [CROSS_FAMILY, AGGREGATES] {
+    for payload in [CROSS_FAMILY, AGGREGATES, INTERLEAVED_AGGREGATES] {
         let (whole, whole_stats) = parse(payload, TestMode::Lenient);
+        // Yield order may follow instance boundaries; compare sorted.
+        let whole = sorted_by_name(whole);
         let chunks = split_lines(payload, 3);
         let mut parser = Parser::new(LenientMode);
         let mut families = Vec::new();
@@ -84,13 +87,17 @@ fn parser_text_chunked_chain_equals_whole_reference() {
         // sample group rides to the next call; a family split between
         // whole rows lands as per-chunk pieces the merge by name
         // reassembles.
-        assert_eq!(common::merge_instances_by_name(families), whole);
-        // Line and family counters are instance-independent.
+        assert_eq!(
+            sorted_by_name(common::merge_instances_by_name(families)),
+            whole
+        );
+        // Line and skip counters are instance-independent; pruned counts
+        // per-flush empty slots, which boundaries create and the whole
+        // parse does not.
         let stats = parser.stats();
         assert_eq!(stats.lines_total, whole_stats.lines_total);
         assert_eq!(stats.skipped_lines, whole_stats.skipped_lines);
         assert_eq!(stats.skipped_families, whole_stats.skipped_families);
-        assert_eq!(stats.pruned_families, whole_stats.pruned_families);
         assert_eq!(stats.last_error, whole_stats.last_error);
         assert!(!parser.is_waiting());
     }
@@ -416,6 +423,85 @@ fn parser_text_complete_aggregation_family_yields_across_chunks_despite_a_staged
     assert!(!parser.is_waiting());
 }
 
+#[test]
+fn parser_text_interleaved_aggregation_families_should_not_split_at_a_boundary() {
+    // Two aggregation families gather at once and the boundary sits
+    // between their rows: the carry must hold every gathering family,
+    // not just the last — a family yields whole or not at all.
+    fn run<M: Mode>(mode: M, part1: &[u8], part2: &[u8], count: u64, sum: f64, what: &str) {
+        let mut parser = Parser::new(mode);
+        let mut families = Vec::new();
+        merge_into(parser.parse_text(part1), &mut families);
+        assert!(
+            families.is_empty(),
+            "{what}: every family still gathers, nothing yields"
+        );
+        merge_into(parser.parse_text(part2), &mut families);
+        assert_eq!(parser.reset(), Ok(()), "{what}");
+
+        assert_eq!(families.len(), 2, "{what}: a and b yield exactly once");
+        assert_eq!(families[0].name.as_ref(), "a", "{what}");
+        assert_eq!(families[1].name.as_ref(), "b", "{what}");
+        assert_eq!(families[0].metrics.len(), 1, "{what}");
+        assert_eq!(families[1].metrics.len(), 1, "{what}");
+        match &families[0].metrics[0].value {
+            MetricValue::Summary(summary) => {
+                assert_eq!(summary.sample_count, Some(count), "{what}");
+                assert_eq!(summary.sample_sum, Some(sum), "{what}");
+            }
+            MetricValue::Histogram(histogram) => {
+                assert_eq!(
+                    histogram.sample_count,
+                    Some(IntOrFloat::Int(count)),
+                    "{what}"
+                );
+                assert_eq!(histogram.sample_sum, Some(sum), "{what}");
+                assert!(!histogram.buckets.is_empty(), "{what}");
+            }
+            other => panic!("{what}: unexpected value {other:?}"),
+        }
+        assert!(rows_whole(&families), "{what}: no half sample group");
+        let stats = parser.stats();
+        assert_eq!(stats.lines_total, 8, "{what}");
+        assert_eq!(stats.metrics_total, 2, "{what}");
+        assert_eq!(stats.discarded_families, 0, "{what}");
+        assert_eq!(stats.last_error, None, "{what}");
+        assert!(!parser.is_waiting());
+    }
+    let summary1 =
+        b"# TYPE a summary\n# TYPE b summary\na{quantile=\"0.5\"} 1\nb{quantile=\"0.5\"} 1\n";
+    let summary2 = b"a_count 2\na_sum 1\nb_count 2\nb_sum 1\n";
+    let histogram1 = b"# TYPE h histogram\n# TYPE g histogram\n\
+                       h_bucket{le=\"+Inf\"} 1\n\
+                       g_bucket{le=\"+Inf\"} 2\n";
+    let histogram2 = b"h_count 1\nh_sum 1.5\ng_count 2\ng_sum 2.5\n";
+    run(LenientMode, summary1, summary2, 2, 1.0, "lenient summaries");
+    run(
+        StrictMode::legacy(),
+        summary1,
+        summary2,
+        2,
+        1.0,
+        "strict summaries",
+    );
+    run(
+        LenientMode,
+        histogram1,
+        histogram2,
+        1,
+        1.5,
+        "lenient histograms",
+    );
+    run(
+        StrictMode::legacy(),
+        histogram1,
+        histogram2,
+        1,
+        1.5,
+        "strict histograms",
+    );
+}
+
 /// Offsets just past every newline, the clean line boundaries of a
 /// payload.
 fn line_boundaries(input: &[u8]) -> Vec<usize> {
@@ -469,6 +555,7 @@ fn assert_every_clean_boundary_keeps_sample_groups_whole(
     what: &str,
 ) {
     let (whole, whole_stats) = parse(payload, mode);
+    let whole = sorted_by_name(whole);
     for cut in line_boundaries(payload) {
         let what = format!("{what}/{cut}");
         let (families, stats) = run_cut(payload, cut, mode);
@@ -476,8 +563,11 @@ fn assert_every_clean_boundary_keeps_sample_groups_whole(
             rows_whole(&families),
             "{what}: a sample group yielded split"
         );
+        // Yield order may follow instance boundaries instead of global
+        // creation order (an empty family prunes and re-creates later);
+        // compare sorted.
         assert_eq!(
-            merge_by_name(families),
+            sorted_by_name(merge_by_name(families)),
             whole,
             "{what}: the chunked pieces must merge to the whole"
         );
@@ -495,6 +585,7 @@ fn parser_text_every_clean_boundary_lenient_should_never_split_a_sample_group() 
     let mid_row = mid_row_cut_histogram();
     for (what, payload) in [
         ("aggregates", AGGREGATES),
+        ("interleaved", INTERLEAVED_AGGREGATES),
         ("multi_row", &multi_row),
         ("mid_row", &mid_row),
     ] {
@@ -508,6 +599,7 @@ fn parser_text_every_clean_boundary_strict_utf8_should_never_split_a_sample_grou
     let mid_row = mid_row_cut_histogram();
     for (what, payload) in [
         ("aggregates", AGGREGATES),
+        ("interleaved", INTERLEAVED_AGGREGATES),
         ("multi_row", &multi_row),
         ("mid_row", &mid_row),
     ] {
@@ -521,6 +613,7 @@ fn parser_text_every_clean_boundary_strict_legacy_should_never_split_a_sample_gr
     let mid_row = mid_row_cut_histogram();
     for (what, payload) in [
         ("aggregates", AGGREGATES),
+        ("interleaved", INTERLEAVED_AGGREGATES),
         ("multi_row", &multi_row),
         ("mid_row", &mid_row),
     ] {
@@ -719,7 +812,7 @@ fn parser_text_strict_chunked_chain_equals_whole_reference() {
             "{what}: last_error"
         );
     }
-    for payload in [CROSS_FAMILY, AGGREGATES] {
+    for payload in [CROSS_FAMILY, AGGREGATES, INTERLEAVED_AGGREGATES] {
         for (mode_name, mode) in modes() {
             let (whole, whole_stats) = parse(payload, mode);
             match mode {

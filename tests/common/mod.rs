@@ -344,6 +344,18 @@ size_count 20\n\
 size_sum 3.5e2\n\
 quoted{label=\"a\\nb\"} 1 1234567890\n";
 
+/// Two aggregation families gathering at once, their rows interleaved:
+/// a boundary between the rows leaves both mid-group and the carry must
+/// hold every one of them, not just the last.
+pub const INTERLEAVED_AGGREGATES: &[u8] = b"# TYPE a summary\n\
+# TYPE b summary\n\
+a{quantile=\"0.5\"} 1\n\
+b{quantile=\"0.5\"} 1\n\
+a_count 2\n\
+a_sum 1\n\
+b_count 2\n\
+b_sum 1\n";
+
 /// Quoted UTF-8 names, comment lines, and blank lines.
 pub const UTF8_AND_BLANKS: &str = "\n\
 # TYPE \"métrique\" gauge\n\
