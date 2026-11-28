@@ -849,6 +849,112 @@ fn parser_text_metadata_chains_across_calls() {
     assert_eq!(merged[0].metric_type, MetricType::Histogram);
 }
 
+// =================== HELP metadata across a chunk boundary =================
+
+#[test]
+fn parser_text_help_after_samples_in_the_same_chunk_should_attach() {
+    // A HELP line after the samples still finds the family pending
+    // within the same chunk: the folding order costs nothing here.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"m 1\n# HELP m hello\n"), &mut families);
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].help.as_deref(), Some("hello"));
+    assert_eq!(families[0].metrics.len(), 1);
+}
+
+#[test]
+fn parser_text_help_before_samples_across_chunks_should_seed_the_resumed_family() {
+    // HELP arrives in an earlier chunk than the samples: the metadata
+    // memory seeds the family a later instance resumes.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"# HELP m hello\n"), &mut families);
+    assert!(families.is_empty(), "metadata-only families prune");
+    merge_into(parser.parse_text(b"m 1\n"), &mut families);
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].help.as_deref(), Some("hello"));
+    assert_eq!(families[0].metrics.len(), 1);
+}
+
+#[test]
+fn parser_text_help_across_a_boundary_should_attach_to_the_resuming_piece() {
+    // The help-less first piece cannot be retrofitted, but the family
+    // resuming after the HELP picks the text up from the memory.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"m 1\n"), &mut families);
+    merge_into(parser.parse_text(b"# HELP m hello\nm 2\n"), &mut families);
+    assert_eq!(families.len(), 2);
+    assert_eq!(families[0].help, None);
+    assert_eq!(families[1].help.as_deref(), Some("hello"));
+    assert_eq!(families[1].metrics.len(), 1);
+
+    let (whole, _) = parse(b"m 1\n# HELP m hello\nm 2\n", TestMode::Lenient);
+    assert_eq!(whole.len(), 1);
+    assert_eq!(whole[0].help.as_deref(), Some("hello"));
+    assert_eq!(whole[0].metrics.len(), 2);
+}
+
+#[test]
+fn parser_text_help_across_a_boundary_should_reach_a_carried_aggregation_family() {
+    // A family the boundary carried never yielded: the late HELP folds
+    // straight onto the restored slot, and the piece is whole with it.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(
+        parser.parse_text(b"# TYPE s summary\ns{quantile=\"0.5\"} 1\n"),
+        &mut families,
+    );
+    assert!(families.is_empty(), "the gathering family carries");
+    merge_into(
+        parser.parse_text(b"# HELP s hello\ns_count 1\ns_sum 1\n"),
+        &mut families,
+    );
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].name, "s");
+    assert_eq!(families[0].help.as_deref(), Some("hello"));
+    assert_eq!(families[0].metric_type, MetricType::Summary);
+    assert_eq!(families[0].metrics.len(), 1);
+}
+
+#[test]
+fn parser_text_help_after_samples_across_a_boundary_should_leave_the_first_piece_help_less() {
+    // The streaming limitation: the first piece yielded whole before the
+    // HELP arrived and nothing it can attach to remains — the HELP only
+    // lands in the metadata memory. The whole-slice read carries the
+    // help; the chunked feed cannot retrofit the yielded piece.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"# TYPE m counter\nm 1\n"), &mut families);
+    merge_into(parser.parse_text(b"# HELP m hello\n"), &mut families);
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].help, None);
+    assert_eq!(families[0].metrics.len(), 1);
+
+    let (whole, _) = parse(
+        b"# TYPE m counter\nm 1\n# HELP m hello\n",
+        TestMode::Lenient,
+    );
+    assert_eq!(whole.len(), 1);
+    assert_eq!(whole[0].help.as_deref(), Some("hello"));
+}
+
+#[test]
+fn parser_text_second_help_across_chunks_should_keep_the_first_silently() {
+    // First wins across chunks through the seed: the resumed slot already
+    // carries the first text, so the second HELP is a silent no-op. The
+    // strict state machine errors instead — see the duplicate-HELP test.
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"# HELP m one\nm 1\n"), &mut families);
+    merge_into(parser.parse_text(b"# HELP m two\nm 2\n"), &mut families);
+    assert_eq!(families.len(), 2);
+    assert_eq!(families[0].help.as_deref(), Some("one"));
+    assert_eq!(families[1].help.as_deref(), Some("one"));
+    assert_eq!(families[1].metrics.len(), 1);
+}
+
 #[test]
 fn parser_text_stats_and_line_numbers_chain() {
     let mut parser = Parser::new(LenientMode);
