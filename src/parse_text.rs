@@ -17,10 +17,8 @@
 //! zero-copy over caller-held slices, chaining staged state across chunk
 //! boundaries through [`StageArea`]; see the README.
 
-use rustc_hash::FxHashSet;
-
 use crate::Stats;
-use crate::assemble::{Assembler, KnownMemory};
+use crate::assemble::{Assembler, FamilyTable};
 use crate::error::{Disposition, Error, ErrorKind};
 use crate::lexer::{LineView, Stage, StageBorrow, StageOwned, lex_line, probe_staged_family};
 use crate::mode::{Mode, Scheme};
@@ -59,9 +57,7 @@ fn pending_fold_family(
 pub struct StageArea {
     line: Vec<u8>,
     carried: Vec<MetricFamily<'static>>,
-    known: KnownMemory,
-    created: FxHashSet<String>,
-    typed: FxHashSet<String>,
+    families: FamilyTable,
     stats: Stats,
     line_no: u64,
     stopped: bool,
@@ -81,9 +77,7 @@ impl StageArea {
     pub(crate) fn reset(&mut self) {
         self.line.clear();
         self.carried.clear();
-        self.known.clear();
-        self.created.clear();
-        self.typed.clear();
+        self.families.clear();
         self.stats = Stats::default();
         self.line_no = 0;
         self.stopped = false;
@@ -119,13 +113,11 @@ pub struct TextParser<'a, M: Mode> {
 impl<'a, M: Mode> TextParser<'a, M> {
     pub fn new(mut staging: StageArea, mode: M, input: &'a [u8]) -> Self {
         let stats = std::mem::take(&mut staging.stats);
-        let known = std::mem::take(&mut staging.known);
-        let created = std::mem::take(&mut staging.created);
-        let typed = std::mem::take(&mut staging.typed);
+        let families = std::mem::take(&mut staging.families);
         let line_no = staging.line_no;
         let stopped = staging.stopped;
         let mut assembler = Assembler::default();
-        assembler.restore_owned_memory(known, created, typed);
+        assembler.restore_family_table(families);
         TextParser {
             mode,
             input_buf: input,
@@ -193,8 +185,7 @@ impl<'a, M: Mode> TextParser<'a, M> {
     /// first — they borrow this instance's input.
     pub fn release(mut self) -> (StageArea, M) {
         self.staging.stats = std::mem::take(&mut self.stats);
-        (self.staging.known, self.staging.created, self.staging.typed) =
-            self.assembler.release_memory();
+        self.staging.families = self.assembler.release_family_table();
         self.staging.line_no = self.line_no;
         self.staging.stopped = self.stopped;
         (self.staging, self.mode)
@@ -328,11 +319,13 @@ impl<'a, M: Mode> TextParser<'a, M> {
                         self.stopped = true;
                         return false;
                     }
-                    // Recycle the leftover labels buffer for the next line.
-                    self.labels = std::mem::take(&mut s.labels);
-                    self.labels.clear();
                     record_skip(&mut self.stats, self.line_no, kind);
                 }
+                // Merge folds leave the buffer in place and row creation
+                // moved it into the metric; reclaim whatever is left for
+                // the next line.
+                self.labels = std::mem::take(&mut s.labels);
+                self.labels.clear();
             }
         }
         true

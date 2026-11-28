@@ -887,9 +887,15 @@ fn parse_sample_value(raw: &[u8]) -> Result<f64, ErrorKind> {
         return Err(ErrorKind::ExpectedFloatValue { got: s.to_string() });
     }
     match s.parse::<f64>() {
-        Ok(v) if !v.is_infinite() || s.to_ascii_lowercase().contains("inf") => Ok(v),
+        Ok(v) if !v.is_infinite() || contains_inf_ci(s) => Ok(v),
         _ => Err(ErrorKind::ExpectedFloatValue { got: s.to_string() }),
     }
+}
+
+/// Case-insensitive "inf" containment, without the lowercased copy
+/// `to_ascii_lowercase` would allocate on every spelled-infinity token.
+fn contains_inf_ci(s: &str) -> bool {
+    s.as_bytes().windows(3).any(|w| w.eq_ignore_ascii_case(b"inf"))
 }
 
 /// Parses the same float grammar as [`parse_sample_value`] for quantile and

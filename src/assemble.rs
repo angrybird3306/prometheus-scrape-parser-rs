@@ -16,7 +16,7 @@
 use std::borrow::Cow;
 use std::hash::Hasher;
 
-use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
+use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::error::ErrorKind;
 use crate::lexer::{SampleLine, Token, parse_float_token};
@@ -242,6 +242,19 @@ fn label_signature(labels: &[Label<'_>]) -> u64 {
     sig
 }
 
+/// Takes the sample's labels for a freshly created row. An empty set
+/// (plain or pure-special lines) leaves the spare capacity with the
+/// caller's recycle instead of an empty-capacity Vec inside the row.
+fn take_row_labels<'a>(sample: &mut SampleLine<'a>) -> Vec<Label<'a>> {
+    let labels = std::mem::take(&mut sample.labels);
+    if labels.is_empty() {
+        sample.labels = labels;
+        Vec::new()
+    } else {
+        labels
+    }
+}
+
 /// Exact label-set equality; the same-order case is a linear compare,
 /// different orders fall to the canonical sorted compare.
 fn label_sets_equal(stored: &[Label<'_>], probe: &[Label<'_>]) -> bool {
@@ -294,35 +307,41 @@ fn strip_special_labels<'a, 'v>(
     (bound, &labels[..write])
 }
 
-/// HELP/TYPE metadata currently recorded for a family name — the shadow of
-/// what a whole-input family map would hold. A family that resumes in a
-/// later instance seeds from here, so it folds and yields exactly as the
-/// whole-input output has it; a lenient skip drops the entry with the
-/// family, mirroring that map's removal.
-#[derive(Default, Clone)]
-struct KnownMeta<'a> {
-    help: Option<Cow<'a, str>>,
-    metric_type: Option<MetricType>,
-}
-
-/// The owned-layer value of the metadata memory: the same shape as
-/// [`KnownMeta`] with fully owned text.
-#[derive(Default, Clone)]
-struct KnownOwnedMeta {
+/// One family's stream-wide state in the single family table: the live
+/// pending slot when the generation matches, first-wins metadata, and
+/// whether a type was assigned. Key presence is the created shadow.
+#[derive(Default)]
+struct FamilyEntry {
+    stamp: u32,
+    slot: Option<usize>,
     help: Option<String>,
     metric_type: Option<MetricType>,
+    typed: bool,
 }
 
-/// The metadata memory's owned layer (see [`KnownMeta`]): entries that
-/// survived an instance boundary, keyed by owned family name. Transfers
-/// between instances as a whole; only the entries each instance added
-/// convert (see [`Assembler::release_memory`]).
-#[derive(Default)]
-pub struct KnownMemory(FxHashMap<String, KnownOwnedMeta>);
+impl FamilyEntry {
+    /// The slot this entry's family currently folds into, when the entry
+    /// was seeded by the current instance generation.
+    fn live_slot(&self, stamp: u32) -> Option<usize> {
+        if self.stamp == stamp { self.slot } else { None }
+    }
+}
 
-impl KnownMemory {
+/// The single name-keyed family table, held across instances in the
+/// [`StageArea`](crate::parse_text::StageArea). One probe replaces the
+/// former index/known/created/typed stack and their owned mirrors; the
+/// generation stamp invalidates every slot at an instance boundary in
+/// O(1), and the map's capacity persists across instances.
+#[derive(Default)]
+pub(crate) struct FamilyTable {
+    map: FxHashMap<String, FamilyEntry>,
+    stamp: u32,
+}
+
+impl FamilyTable {
     pub(crate) fn clear(&mut self) {
-        self.0.clear();
+        self.map.clear();
+        self.stamp = 0;
     }
 }
 
@@ -335,24 +354,15 @@ fn into_owned_static(text: &str) -> Cow<'static, str> {
 #[derive(Default)]
 pub(crate) struct Assembler<'a> {
     pending_metric_families: Vec<PendingMetricFamily<'a>>,
-    index: FxHashMap<Cow<'a, str>, usize>,
-    /// Metadata shadow keyed by resolved family name: the borrowed layer
-    /// holds this instance's entries, [`KnownMemory`] the ones that
-    /// survived earlier instances.
-    known: FxHashMap<Cow<'a, str>, KnownMeta<'a>>,
-    known_owned: KnownMemory,
-    /// Every resolved family name ever created, yielded families included:
-    /// they keep shadowing the metadata memory's type for suffix
-    /// resolution, exactly as a whole-input family map would.
-    created: FxHashSet<Cow<'a, str>>,
-    created_owned: FxHashSet<String>,
-    /// Family names whose type is assigned stream-wide — by a TYPE line or
-    /// a sample's implicit `Untyped` default (first wins) — so a TYPE line
-    /// landing after the family's samples stays as ineffective as the
-    /// whole-input fold's, even in a later instance where the slot is a
-    /// fresh re-seed.
-    typed: FxHashSet<Cow<'a, str>>,
-    typed_owned: FxHashSet<String>,
+    /// The single name-keyed family table: live slots, first-wins
+    /// metadata, the assigned-type shadow, and the created shadow (key
+    /// presence) — everything the former seven-table stack tracked.
+    families: FamilyTable,
+    /// The family of the previous sample line: consecutive same-family
+    /// lines skip suffix resolution and hashing entirely. Cleared by any
+    /// metadata fold, yield, or compaction — anything that can change a
+    /// name's resolution or slot.
+    last: Option<(Cow<'a, str>, usize)>,
     /// Indices of the families surviving pruning, in creation order; filled
     /// by [`Assembler::flush_ready`], consumed by [`Assembler::take_next`].
     ready_indices: Vec<u32>,
@@ -367,124 +377,139 @@ pub(crate) struct Assembler<'a> {
 
 impl<'a> Assembler<'a> {
     fn lookup_type(&self, family_name: &str) -> Option<Option<MetricType>> {
-        if let Some(&i) = self.index.get(family_name)
-            && !self.pending_metric_families[i].name.as_ref().is_empty()
-        {
-            return Some(self.pending_metric_families[i].metric_type);
-        }
-        if let Some(m) = self.known_owned.0.get(family_name) {
-            return Some(m.metric_type);
-        }
-        if let Some(m) = self.known.get(family_name) {
-            return Some(m.metric_type);
-        }
-        // A family that already yielded: a whole-input fold still holds it, so
-        // an untyped entry keeps shadowing a parent name's known type.
-        if self.created.contains(family_name) || self.created_owned.contains(family_name) {
-            return Some(None);
-        }
-        None
+        // Key presence is the created shadow: an existing entry answers
+        // with its type (or none), whatever layer recorded it.
+        self.families.map.get(family_name).map(|e| e.metric_type)
     }
 
     pub(crate) fn family_name<'r>(&self, raw: &'r str) -> &'r str {
         resolve_family_name(raw, |name| self.lookup_type(name))
     }
 
-    fn family_idx(&mut self, resolved: Cow<'a, str>) -> usize {
-        // A slot whose family was already yielded or dropped holds an
-        // all-default shell (empty name); its stale key must not fold into
-        // it — overwrite it with a fresh family seeded from the metadata
-        // memory instead, so a family resuming in a later instance keeps
-        // the HELP/TYPE the whole-input fold carries.
-        if let Some(&i) = self.index.get(resolved.as_ref())
-            && !self.pending_metric_families[i].name.as_ref().is_empty()
-        {
-            return i;
+    // The Cow preserves the borrowed/owned name distinction: a borrowed
+    // pending name stays zero-copy, an owned one outlives its token.
+    #[allow(clippy::ptr_arg)]
+    fn family_idx(&mut self, resolved: &Cow<'a, str>) -> usize {
+        let stamp = self.families.stamp;
+        match self.families.map.get_mut(resolved.as_ref()) {
+            Some(entry) => {
+                if let Some(slot) = entry.live_slot(stamp) {
+                    return slot;
+                }
+                // The previous slot yielded or the entry crossed an
+                // instance: seed a fresh pending family from the entry's
+                // first-wins metadata, exactly as a whole-input family map
+                // would resume it.
+                let seed_help = entry.help.clone();
+                let seed_type = entry.metric_type;
+                entry.stamp = stamp;
+                entry.slot = Some(self.pending_metric_families.len());
+                let i = self.pending_metric_families.len();
+                self.pending_metric_families.push(PendingMetricFamily {
+                    name: resolved.clone(),
+                    help: seed_help.map(Cow::Owned),
+                    metric_type: seed_type,
+                    metrics: Vec::new(),
+                    rows: FxHashMap::default(),
+                });
+                i
+            }
+            None => {
+                let i = self.pending_metric_families.len();
+                self.families.map.insert(
+                    resolved.as_ref().to_string(),
+                    FamilyEntry {
+                        stamp,
+                        slot: Some(i),
+                        help: None,
+                        metric_type: None,
+                        typed: false,
+                    },
+                );
+                self.pending_metric_families.push(PendingMetricFamily {
+                    name: resolved.clone(),
+                    help: None,
+                    metric_type: None,
+                    metrics: Vec::new(),
+                    rows: FxHashMap::default(),
+                });
+                i
+            }
         }
-        let seed = match self.known_owned.0.get(resolved.as_ref()) {
-            Some(m) => Some(KnownMeta {
-                help: m.help.clone().map(Cow::Owned),
-                metric_type: m.metric_type,
-            }),
-            None => self.known.get(resolved.as_ref()).cloned(),
-        };
-        let i = self.pending_metric_families.len();
-        self.pending_metric_families.push(PendingMetricFamily {
-            name: resolved.clone(),
-            help: seed.as_ref().and_then(|m| m.help.clone()),
-            metric_type: seed.and_then(|m| m.metric_type),
-            metrics: Vec::new(),
-            rows: FxHashMap::default(),
-        });
-        // Insert is idempotent: the shadow crosses instances while the
-        // index is per-instance, so a family re-created in a later
-        // instance is already shadowed.
-        if !self.created_owned.contains(resolved.as_ref()) {
-            self.created.insert(resolved.clone());
-        }
-        self.index.insert(resolved, i);
-        i
     }
 
     /// Resolves the raw name and returns its family slot, creating the
     /// family if absent; fold paths hold the slot instead of the name so
     /// the borrowed name never crosses a sample move.
     fn resolve_idx(&mut self, name: &Token<'a>) -> usize {
-        match &name.decoded {
+        // The previous sample line's family, matched on the raw name:
+        // consecutive same-family lines are the dominant pattern and skip
+        // suffix resolution and hashing entirely. A raw-name match is
+        // sound because resolution only changes when a metadata fold
+        // creates or retypes a candidate — and those clear the memory.
+        if let Some((last, slot)) = &self.last
+            && last.as_ref() == name.decoded.as_ref()
+        {
+            return *slot;
+        }
+        self.last = None;
+        let resolved = match &name.decoded {
             Cow::Borrowed(s) => {
                 // `s` derefs to a true 'a input slice, so the resolved key
                 // can stay borrowed; resolving on the Cow would tie it to
                 // this call and force an owned key.
-                let resolved = resolve_family_name(s, |n| self.lookup_type(n));
-                self.family_idx(Cow::Borrowed(resolved))
+                Cow::Borrowed(resolve_family_name(s, |n| self.lookup_type(n)))
             }
             Cow::Owned(_) => {
                 let resolved = resolve_family_name(&name.decoded, |n| self.lookup_type(n));
-                self.family_idx(Cow::Owned(resolved.to_string()))
+                Cow::Owned(resolved.to_string())
             }
-        }
+        };
+        let slot = self.family_idx(&resolved);
+        self.last = Some((resolved, slot));
+        slot
     }
 
-    /// Folds a HELP line: first wins, on the instance and in the memory.
+    /// Folds a HELP line: first wins, on the instance and in the table.
     pub(crate) fn fold_help(&mut self, name: Token<'a>, text: Token<'a>) {
+        self.last = None;
         let i = self.resolve_idx(&name);
         if self.pending_metric_families[i].help.is_none() {
-            let remembered = text.decoded.clone();
-            self.pending_metric_families[i].help = Some(text.decoded);
-            let key = self.pending_metric_families[i].name.clone();
-            if let Some(meta) = self.known_owned.0.get_mut(key.as_ref()) {
-                meta.help = Some(remembered.into_owned());
-            } else {
-                let meta = self.known.entry(key).or_default();
-                meta.help = Some(remembered);
+            let remembered = text.decoded.into_owned();
+            let fam = &mut self.pending_metric_families[i];
+            let key = fam.name.as_ref();
+            if let Some(entry) = self.families.map.get_mut(key)
+                && entry.help.is_none()
+            {
+                entry.help = Some(remembered.clone());
+                fam.help = Some(Cow::Owned(remembered));
             }
         }
     }
 
-    /// Folds a TYPE line: first wins, on the instance and in the memory.
+    /// Folds a TYPE line: first wins, on the instance and in the table.
     pub(crate) fn fold_type(&mut self, name: Token<'a>, metric_type: MetricType) {
         // The whole-input fold resists a TYPE line once anything assigned its
-        // type — a previous TYPE line, or a sample's implicit Untyped
+        // type — a previous TYPE line, or a sample's implicit `Untyped`
         // default. Check before `resolve_idx`, whose creation would put
         // the name into the assigned set itself.
+        self.last = None;
         let assigned = {
             let resolved = self.family_name(&name.decoded);
-            self.typed.contains(resolved) || self.typed_owned.contains(resolved)
+            self.families.map.get(resolved).is_some_and(|e| e.typed)
         };
         let i = self.resolve_idx(&name);
         if !assigned {
-            let slot_name = self.pending_metric_families[i].name.clone();
-            if self.pending_metric_families[i].metric_type.is_none() {
-                self.pending_metric_families[i].metric_type = Some(metric_type);
-                if let Some(meta) = self.known_owned.0.get_mut(slot_name.as_ref()) {
-                    meta.metric_type = Some(metric_type);
-                } else {
-                    let meta = self.known.entry(slot_name.clone()).or_default();
-                    meta.metric_type = Some(metric_type);
-                }
+            let fam = &mut self.pending_metric_families[i];
+            if fam.metric_type.is_none() {
+                fam.metric_type = Some(metric_type);
             }
-            if !self.typed_owned.contains(slot_name.as_ref()) {
-                self.typed.insert(slot_name);
+            let key = fam.name.as_ref();
+            if let Some(entry) = self.families.map.get_mut(key) {
+                if entry.metric_type.is_none() {
+                    entry.metric_type = Some(metric_type);
+                }
+                entry.typed = true;
             }
         }
     }
@@ -500,21 +525,16 @@ impl<'a> Assembler<'a> {
         strict: bool,
     ) -> Result<(), ErrorKind> {
         let idx = self.resolve_idx(&sample.name);
-        let assigned_here = {
+        {
             let fam = &mut self.pending_metric_families[idx];
             if fam.metric_type.is_none() {
                 // The implicit default assigns the type stream-wide: a
                 // later TYPE line must not override it.
                 fam.metric_type = Some(MetricType::Untyped);
-                true
-            } else {
-                false
-            }
-        };
-        if assigned_here {
-            let slot_name = self.pending_metric_families[idx].name.clone();
-            if !self.typed_owned.contains(slot_name.as_ref()) {
-                self.typed.insert(slot_name);
+                let key = fam.name.as_ref();
+                if let Some(entry) = self.families.map.get_mut(key) {
+                    entry.typed = true;
+                }
             }
         }
         let metric_type = self.pending_metric_families[idx].metric_type.unwrap();
@@ -543,8 +563,9 @@ impl<'a> Assembler<'a> {
     ) -> Result<(), ErrorKind> {
         let timestamp = resolve_timestamp(sample.timestamp_raw.as_deref(), strict)?;
         self.created_metrics += 1;
+        let labels = take_row_labels(sample);
         self.pending_metric_families[idx].metrics.push(Metric {
-            labels: std::mem::take(&mut sample.labels),
+            labels,
             timestamp,
             value: MetricValue::Sample(sample.value),
         });
@@ -587,8 +608,9 @@ impl<'a> Assembler<'a> {
                     }
                     None => {
                         self.created_metrics += 1;
+                        let labels = take_row_labels(sample);
                         fam.metrics.push(Metric {
-                            labels: std::mem::take(&mut sample.labels),
+                            labels,
                             timestamp: None,
                             value: MetricValue::Summary(SummaryValue::default()),
                         });
@@ -671,8 +693,9 @@ impl<'a> Assembler<'a> {
                     }
                     None => {
                         self.created_metrics += 1;
+                        let labels = take_row_labels(sample);
                         fam.metrics.push(Metric {
-                            labels: std::mem::take(&mut sample.labels),
+                            labels,
                             timestamp: None,
                             value: MetricValue::Histogram(HistogramValue::default()),
                         });
@@ -760,13 +783,12 @@ impl<'a> Assembler<'a> {
             old += 1;
             keep
         });
-        self.index.retain(|_, v| match remap[*v] {
-            Some(slot) => {
-                *v = slot as usize;
-                true
+        for entry in self.families.map.values_mut() {
+            if let Some(slot) = entry.slot {
+                entry.slot = remap[slot].map(|new| new as usize);
             }
-            None => false,
-        });
+        }
+        self.last = None;
         pruned
     }
 
@@ -776,6 +798,13 @@ impl<'a> Assembler<'a> {
     pub(crate) fn take_next(&mut self) -> Option<MetricFamily<'a>> {
         let index = *self.ready_indices.get(self.cursor)?;
         self.cursor += 1;
+        let name = self.pending_metric_families[index as usize].name.clone();
+        if let Some(entry) = self.families.map.get_mut(name.as_ref()) {
+            // The family yields but keeps shadowing: its entry stays with
+            // the slot cleared.
+            entry.slot = None;
+        }
+        self.last = None;
         Some(std::mem::take(&mut self.pending_metric_families[index as usize]).into())
     }
 
@@ -783,10 +812,8 @@ impl<'a> Assembler<'a> {
     /// aggregation-typed (summary/histogram): the zero-copy parser's carry
     /// target when the staged cut line names it.
     pub(crate) fn aggregation_slot_of(&self, resolved: &str) -> Option<usize> {
-        let &i = self.index.get(resolved)?;
-        if self.pending_metric_families[i].name.as_ref().is_empty() {
-            return None;
-        }
+        let entry = self.families.map.get(resolved)?;
+        let i = entry.live_slot(self.families.stamp)?;
         matches!(
             self.pending_metric_families[i].metric_type,
             Some(MetricType::Summary | MetricType::Histogram | MetricType::GaugeHistogram)
@@ -851,13 +878,15 @@ impl<'a> Assembler<'a> {
             return None;
         }
 
-        // The slot's index key is removed so nothing folds into the shell;
-        // the metadata memory is untouched (it transfers separately).
+        // The slot closes so nothing folds into the shell; the table's
+        // metadata transfers separately.
         let family = MetricFamily::from(std::mem::take(&mut self.pending_metric_families[slot]));
         if family.name.as_ref().is_empty() {
             return None;
         }
-        self.index.remove(family.name.as_ref());
+        if let Some(entry) = self.families.map.get_mut(family.name.as_ref()) {
+            entry.slot = None;
+        }
         Some(MetricFamily {
             name: into_owned_static(&family.name),
             help: family.help.as_deref().map(into_owned_static),
@@ -887,58 +916,57 @@ impl<'a> Assembler<'a> {
     /// Seeds a carried family back in as an open slot: the zero-copy
     /// parser's next instance continues it with borrowed lines.
     pub(crate) fn restore_carried(&mut self, family: MetricFamily<'static>) {
-        let name = family.name.clone();
+        let MetricFamily {
+            name,
+            help,
+            metric_type,
+            metrics,
+        } = family;
         let i = self.pending_metric_families.len();
+        match self.families.map.get_mut(name.as_ref()) {
+            Some(entry) => {
+                entry.stamp = self.families.stamp;
+                entry.slot = Some(i);
+            }
+            None => {
+                self.families.map.insert(
+                    name.as_ref().to_string(),
+                    FamilyEntry {
+                        stamp: self.families.stamp,
+                        slot: Some(i),
+                        help: help.as_deref().map(str::to_owned),
+                        metric_type: Some(metric_type),
+                        typed: true,
+                    },
+                );
+            }
+        }
         self.pending_metric_families.push(PendingMetricFamily {
-            name: family.name,
-            help: family.help,
-            metric_type: Some(family.metric_type),
-            metrics: family.metrics,
+            name,
+            help,
+            metric_type: Some(metric_type),
+            metrics,
             // The carried family's rows rebuild lazily: the first probe
             // per label set falls back to the scan and backfills.
             rows: FxHashMap::default(),
         });
-        self.index.insert(name, i);
     }
 
     /// Materializes the metadata memory at the instance boundary: the
     /// entries this instance added convert to owned — the only per-boundary
     /// cost — and the owned layers move out as a whole, so transfers stay
     /// linear in what each instance adds.
-    pub(crate) fn release_memory(&mut self) -> (KnownMemory, FxHashSet<String>, FxHashSet<String>) {
-        for (key, meta) in self.known.drain() {
-            let KnownMeta { help, metric_type } = meta;
-            let entry = self.known_owned.0.entry(key.into_owned()).or_default();
-            if entry.help.is_none() {
-                entry.help = help.map(Cow::into_owned);
-            }
-            if entry.metric_type.is_none() {
-                entry.metric_type = metric_type;
-            }
-        }
-        for key in self.created.drain() {
-            self.created_owned.insert(key.into_owned());
-        }
-        for key in self.typed.drain() {
-            self.typed_owned.insert(key.into_owned());
-        }
-        (
-            std::mem::take(&mut self.known_owned),
-            std::mem::take(&mut self.created_owned),
-            std::mem::take(&mut self.typed_owned),
-        )
+    /// Hands the family table to the next instance wholesale: the
+    /// generation stamp retires every slot in O(1) and the map's capacity
+    /// persists across instances.
+    pub(crate) fn release_family_table(&mut self) -> FamilyTable {
+        std::mem::take(&mut self.families)
     }
 
-    /// Adopts the previous instance's owned memory wholesale.
-    pub(crate) fn restore_owned_memory(
-        &mut self,
-        known: KnownMemory,
-        created: FxHashSet<String>,
-        typed: FxHashSet<String>,
-    ) {
-        self.known_owned = known;
-        self.created_owned = created;
-        self.typed_owned = typed;
+    /// Adopts the previous instance's family table wholesale.
+    pub(crate) fn restore_family_table(&mut self, families: FamilyTable) {
+        self.families = families;
+        self.last = None;
     }
 }
 
