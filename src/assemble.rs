@@ -322,9 +322,6 @@ pub(crate) struct Assembler<'a> {
     /// Old slot -> new slot of the last compaction, reused across flushes.
     remap: Vec<Option<u32>>,
     cursor: usize,
-    /// The slot the last folded line touched: the carry fallback when the
-    /// staged cut line names no open aggregation family.
-    last_slot: Option<usize>,
     /// Metric rows created since the last drain, folded into
     /// `Stats::metrics_total`; aggregation lines folding into an existing
     /// row count nothing.
@@ -413,7 +410,6 @@ impl<'a> Assembler<'a> {
     /// Folds a HELP line: first wins, on the instance and in the memory.
     pub(crate) fn fold_help(&mut self, name: Token<'a>, text: Token<'a>) {
         let i = self.resolve_idx(&name);
-        self.last_slot = Some(i);
         if self.pending_metric_families[i].help.is_none() {
             let remembered = text.decoded.clone();
             self.pending_metric_families[i].help = Some(text.decoded);
@@ -438,7 +434,6 @@ impl<'a> Assembler<'a> {
             self.typed.contains(resolved) || self.typed_owned.contains(resolved)
         };
         let i = self.resolve_idx(&name);
-        self.last_slot = Some(i);
         if !assigned {
             let slot_name = self.pending_metric_families[i].name.clone();
             if self.pending_metric_families[i].metric_type.is_none() {
@@ -467,7 +462,6 @@ impl<'a> Assembler<'a> {
         strict: bool,
     ) -> Result<(), ErrorKind> {
         let idx = self.resolve_idx(&sample.name);
-        self.last_slot = Some(idx);
         let assigned_here = {
             let fam = &mut self.pending_metric_families[idx];
             if fam.metric_type.is_none() {
@@ -676,7 +670,6 @@ impl<'a> Assembler<'a> {
     /// stale keys of yielded shells drop out here.
     pub(crate) fn flush_ready(&mut self) -> u64 {
         self.cursor = 0;
-        self.last_slot = None;
         self.ready_indices.clear();
         self.ready_indices
             .reserve(self.pending_metric_families.len());
@@ -771,8 +764,12 @@ impl<'a> Assembler<'a> {
         }
     }
 
-    pub(crate) fn last_slot(&self) -> Option<usize> {
-        self.last_slot
+    /// Every open aggregation slot still gathering its sample group, in
+    /// creation order: the families a boundary carries over.
+    pub(crate) fn gathering_aggregation_slots(&self) -> Vec<usize> {
+        (0..self.pending_metric_families.len())
+            .filter(|&i| self.gathers_sample_group(i))
+            .collect()
     }
 
     /// Takes one slot's family as fully owned text when it is

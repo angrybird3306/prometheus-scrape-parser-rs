@@ -58,7 +58,7 @@ fn pending_fold_family(
 #[derive(Default)]
 pub struct StageArea {
     line: Vec<u8>,
-    carried: Option<MetricFamily<'static>>,
+    carried: Vec<MetricFamily<'static>>,
     known: KnownMemory,
     created: HashSet<String>,
     typed: HashSet<String>,
@@ -72,15 +72,15 @@ impl StageArea {
         !self.line.is_empty()
     }
 
-    /// Whether an instance ended holding a family back for the next one.
+    /// Whether an instance ended holding families back for the next one.
     pub(crate) fn has_carried_family(&self) -> bool {
-        self.carried.is_some()
+        !self.carried.is_empty()
     }
 
     /// Clears all chained state, keeping buffer capacities.
     pub(crate) fn reset(&mut self) {
         self.line.clear();
-        self.carried = None;
+        self.carried.clear();
         self.known.clear();
         self.created.clear();
         self.typed.clear();
@@ -237,13 +237,13 @@ impl<'a, M: Mode> TextParser<'a, M> {
         self.flush_end(!self.stopped);
     }
 
-    /// Hands the family the previous instance carried in to the assembler,
-    /// once. The first line that can touch a family finds it in place; an
-    /// instance folding nothing, or only blank and comment lines, leaves it
-    /// in the stage untouched.
+    /// Hands the families the previous instance carried in to the
+    /// assembler, once. The first line that can touch a family finds them
+    /// in place; an instance folding nothing, or only blank and comment
+    /// lines, leaves them in the stage untouched.
     fn restore_carried(&mut self) {
-        if let Some(carried) = self.staging.carried.take() {
-            self.assembler.restore_carried(carried);
+        for family in self.staging.carried.drain(..) {
+            self.assembler.restore_carried(family);
         }
     }
 
@@ -332,28 +332,29 @@ impl<'a, M: Mode> TextParser<'a, M> {
         true
     }
 
-    /// Ends the instance: an aggregation family the input may still extend
-    /// carries over as owned text. The staged cut line names its family by
-    /// the probe, falling back to the last folded family while it still
-    /// gathers a sample group — a complete family yields.
+    /// Ends the instance: aggregation families the input may still extend
+    /// carry over as owned text. Every family still gathering its sample
+    /// group carries; the staged cut line's own family joins them by the
+    /// probe even when whole, since the cut row may extend it. A family
+    /// nothing can extend yields.
     fn flush_end(&mut self, carry_allowed: bool) {
         if carry_allowed {
-            let scheme = self.mode.name_scheme();
-            let slot = if self.staging.line.is_empty() {
-                self.assembler
-                    .last_slot()
-                    .filter(|&slot| self.assembler.gathers_sample_group(slot))
-            } else {
-                pending_fold_family(&self.staging.line, false, scheme, &self.assembler)
-                    .and_then(|name| self.assembler.aggregation_slot_of(&name))
-                    .or_else(|| {
-                        self.assembler
-                            .last_slot()
-                            .filter(|&slot| self.assembler.gathers_sample_group(slot))
-                    })
-            };
-            if let Some(slot) = slot {
-                self.staging.carried = self.assembler.take_aggregation_slot_owned(slot);
+            let mut slots = self.assembler.gathering_aggregation_slots();
+            if !self.staging.line.is_empty() {
+                let scheme = self.mode.name_scheme();
+                if let Some(name) =
+                    pending_fold_family(&self.staging.line, false, scheme, &self.assembler)
+                    && let Some(slot) = self.assembler.aggregation_slot_of(&name)
+                    && !slots.contains(&slot)
+                {
+                    slots.push(slot);
+                    slots.sort_unstable();
+                }
+            }
+            for slot in slots {
+                if let Some(family) = self.assembler.take_aggregation_slot_owned(slot) {
+                    self.staging.carried.push(family);
+                }
             }
         }
         self.stats.pruned_families += self.assembler.flush_ready();

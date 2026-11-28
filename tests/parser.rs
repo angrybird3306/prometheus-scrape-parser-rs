@@ -471,10 +471,10 @@ fn parser_text_interleaved_aggregation_families_should_not_split_at_a_boundary()
     let summary1 =
         b"# TYPE a summary\n# TYPE b summary\na{quantile=\"0.5\"} 1\nb{quantile=\"0.5\"} 1\n";
     let summary2 = b"a_count 2\na_sum 1\nb_count 2\nb_sum 1\n";
-    let histogram1 = b"# TYPE h histogram\n# TYPE g histogram\n\
-                       h_bucket{le=\"+Inf\"} 1\n\
-                       g_bucket{le=\"+Inf\"} 2\n";
-    let histogram2 = b"h_count 1\nh_sum 1.5\ng_count 2\ng_sum 2.5\n";
+    let histogram1 = b"# TYPE a histogram\n# TYPE b histogram\n\
+                       a_bucket{le=\"+Inf\"} 1\n\
+                       b_bucket{le=\"+Inf\"} 2\n";
+    let histogram2 = b"a_count 1\na_sum 1.5\nb_count 2\nb_sum 2.5\n";
     run(LenientMode, summary1, summary2, 2, 1.0, "lenient summaries");
     run(
         StrictMode::legacy(),

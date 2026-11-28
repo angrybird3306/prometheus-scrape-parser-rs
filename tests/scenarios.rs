@@ -255,12 +255,11 @@ fn text_parse_2_counters_gauges_docstrings_various_whitespace_escape_sequences_s
 #[test]
 fn text_parse_3_the_evil_summary_mixed_with_other_types_and_funny_comments_should_pass() {
     let input = SCENARIO_3_INPUT;
-    // Creation order: my_summary (TYPE line 2), decoy, fake_sum,
-    // another_summary — but my_summary's rows never gather whole sample
-    // groups (several lack their `_sum` or `_count`), and the input ends
-    // on its `# HELP` line, so the family rides to `finish` and yields
-    // last. Go's array order (fake_sum, decoy, ...) is map literal order
-    // only.
+    // Yield order: decoy and fake_sum fold whole and yield mid-stream;
+    // my_summary and another_summary both still gather sample groups at
+    // the input's end (`# HELP` tail), so both carry to `finish` and
+    // yield there in creation order. Go's array order (fake_sum, decoy,
+    // ...) is map literal order only.
     let want = vec![
         family(
             "decoy",
@@ -273,18 +272,6 @@ fn text_parse_3_the_evil_summary_mixed_with_other_types_and_funny_comments_shoul
             MetricType::Untyped,
             None,
             vec![metric(vec![("n1", "val1")], 2001.0, None)],
-        ),
-        family(
-            "another_summary",
-            MetricType::Summary,
-            None,
-            vec![summary_metric(
-                vec![("n2", "val2"), ("n1", "val1")],
-                None,
-                Some(20),
-                None,
-                vec![(0.3, -1.2)],
-            )],
         ),
         family(
             "my_summary",
@@ -308,6 +295,18 @@ fn text_parse_3_the_evil_summary_mixed_with_other_types_and_funny_comments_shoul
                 summary_metric(vec![("n1", "val2")], Some(15), None, Some(8.0), vec![]),
                 summary_metric(vec![("n1", "val3")], None, None, None, vec![(0.2, 4711.0)]),
             ],
+        ),
+        family(
+            "another_summary",
+            MetricType::Summary,
+            None,
+            vec![summary_metric(
+                vec![("n2", "val2"), ("n1", "val1")],
+                None,
+                Some(20),
+                None,
+                vec![(0.3, -1.2)],
+            )],
         ),
     ];
     assert_scenario_passes(input, want);

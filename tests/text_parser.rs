@@ -162,6 +162,10 @@ fn text_parser_line_per_line_should_merge_equal_whole_slice_exactly() {
     for (name, input) in payloads() {
         for (mode_name, mode) in modes() {
             let (whole, whole_stats) = parse(input, mode);
+            // The flat yield order can diverge from whole-slice creation
+            // order: carried families yield from their continuation
+            // instance. Compare sorted.
+            let whole = sorted_by_name(whole);
             for lines_per_instance in [1, 3] {
                 let (families, stats) = collect_by_lines(input, lines_per_instance, mode);
                 // Aggregation families a one-line instance leaves
@@ -174,8 +178,8 @@ fn text_parser_line_per_line_should_merge_equal_whole_slice_exactly() {
                 // carry, so family equality is asserted on clean inputs.
                 if stats.skipped_families == 0 {
                     assert_eq!(
-                        merge_instances_by_name(families),
-                        whole,
+                        sorted_by_name(merge_instances_by_name(families)),
+                        whole.clone(),
                         "{mode_name} merged families differ for {name} at \
                          {lines_per_instance} lines per instance"
                     );

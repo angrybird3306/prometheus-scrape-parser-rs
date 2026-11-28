@@ -17,6 +17,7 @@ Fixed:
 - fix: skip illegal lines in lenient mode
 - fix: fail on truncated final line in lenient mode
 - fix: yield complete family before staging truncated line
+- fix: yield complete family for interleaved histogram & summary
 
 Added:
 - feat: more accurate error messages
