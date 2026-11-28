@@ -18,7 +18,7 @@ prometheus-scrape-parser-rs = "0.2"
 ```rust
 use prometheus_scrape_parser_rs::{StrictMode, MetricFamilyView, MetricView, Parser};
 
-let mut parser = Parser::new(StrictMode);
+let mut parser = Parser::new(StrictMode::legacy());
 let payload = b"# TYPE http_requests_total counter\nhttp_requests_total{code=\"200\"} 1027\n";
 
 for family in parser.parse_text(payload) {
