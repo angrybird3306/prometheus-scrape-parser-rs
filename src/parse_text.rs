@@ -17,6 +17,8 @@
 //! zero-copy over caller-held slices, chaining staged state across chunk
 //! boundaries through [`StageArea`]; see the README.
 
+use std::borrow::Cow;
+
 use crate::Stats;
 use crate::assemble::{Assembler, FamilyTable};
 use crate::error::{Disposition, Error, ErrorKind};
@@ -33,21 +35,21 @@ fn record_skip(stats: &mut Stats, line: u64, kind: ErrorKind) {
 /// Names the family the staged cut line folds into, without folding it.
 /// Only the head is lexed — the name token cannot change as the line
 /// extends — so re-probing a growing staged line stays linear.
-fn pending_fold_family(
-    line_bytes: &[u8],
+fn pending_fold_family<'r>(
+    line_bytes: &'r [u8],
     eol_is_newline: bool,
     scheme: Option<Scheme>,
     asm: &Assembler<'_>,
-) -> Option<String> {
-    let mut scratch = Vec::new();
-    let name = probe_staged_family(
-        line_bytes,
-        eol_is_newline,
-        scheme,
-        &mut scratch,
-        StageBorrow,
-    )?;
-    Some(asm.family_name(&name.decoded).to_string())
+    scratch: &mut Vec<u8>,
+) -> Option<Cow<'r, str>> {
+    let name = probe_staged_family(line_bytes, eol_is_newline, scheme, scratch, StageBorrow)?;
+    // Resolution strips a suffix: a prefix slice of the raw name. A
+    // borrowed token resolves with no String at all; only an escape-decoded
+    // name (its decoded text lives in this call) copies.
+    match &name.decoded {
+        Cow::Borrowed(s) => Some(Cow::Borrowed(asm.family_name(s))),
+        Cow::Owned(s) => Some(Cow::Owned(asm.family_name(s).to_string())),
+    }
 }
 
 /// The owned state a [`TextParser`] carries across instance boundaries;
@@ -341,9 +343,13 @@ impl<'a, M: Mode> TextParser<'a, M> {
             let mut slots = self.assembler.gathering_aggregation_slots();
             if !self.staging.line.is_empty() {
                 let scheme = self.mode.name_scheme();
-                if let Some(name) =
-                    pending_fold_family(&self.staging.line, false, scheme, &self.assembler)
-                    && let Some(slot) = self.assembler.aggregation_slot_of(&name)
+                if let Some(name) = pending_fold_family(
+                    &self.staging.line,
+                    false,
+                    scheme,
+                    &self.assembler,
+                    &mut self.scratch,
+                ) && let Some(slot) = self.assembler.aggregation_slot_of(&name)
                     && !slots.contains(&slot)
                 {
                     slots.push(slot);

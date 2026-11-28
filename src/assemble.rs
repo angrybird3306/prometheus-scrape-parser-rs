@@ -798,11 +798,15 @@ impl<'a> Assembler<'a> {
     pub(crate) fn take_next(&mut self) -> Option<MetricFamily<'a>> {
         let index = *self.ready_indices.get(self.cursor)?;
         self.cursor += 1;
-        let name = self.pending_metric_families[index as usize].name.clone();
-        if let Some(entry) = self.families.map.get_mut(name.as_ref()) {
-            // The family yields but keeps shadowing: its entry stays with
-            // the slot cleared.
-            entry.slot = None;
+        // The slot clear borrows the pending name — field-disjoint from the
+        // map — instead of cloning it on every yield.
+        {
+            let fam = &mut self.pending_metric_families[index as usize];
+            if let Some(entry) = self.families.map.get_mut(fam.name.as_ref()) {
+                // The family yields but keeps shadowing: its entry stays with
+                // the slot cleared.
+                entry.slot = None;
+            }
         }
         self.last = None;
         Some(std::mem::take(&mut self.pending_metric_families[index as usize]).into())
