@@ -1330,6 +1330,121 @@ fn parser_reset_stats_should_keep_the_chained_stream_state() {
     assert!(!parser.is_waiting());
 }
 
+// ========================= reset_stats mid-stream ==========================
+
+#[test]
+fn parser_reset_stats_mid_stream_should_count_only_post_reset_input() {
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"a 1\nb 2\n"), &mut families);
+    assert_eq!(parser.stats().lines_total, 2);
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+    // The zeroing sticks: the chained stage's own tally clears too, so
+    // the old counts cannot resurrect at the next sync.
+    merge_into(parser.parse_text(b"c 3\n"), &mut families);
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 1, "counting restarts at the clear");
+    assert_eq!(stats.metrics_total, 1);
+    assert_eq!(stats.last_error, None);
+    // The finalized totals count the post-reset input only.
+    assert_eq!(parser.reset(), Ok(()));
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 1);
+    assert_eq!(stats.metrics_total, 1);
+}
+
+#[test]
+fn parser_proto_reset_stats_mid_stream_should_count_only_post_reset_messages() {
+    let input = proto_stream(&[("a", 1.0), ("b", 2.0)]);
+    let cut = proto_stream(&[("a", 1.0)]).len();
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_view_into(parser.parse_proto(&input[..cut]), &mut families);
+    assert_eq!(parser.stats().metrics_total, 1);
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+    merge_view_into(parser.parse_proto(&input[cut..]), &mut families);
+    assert_eq!(families.len(), 2);
+    let stats = parser.stats();
+    assert_eq!(stats.metrics_total, 1, "counting restarts at the clear");
+    assert_eq!(stats.last_error, None);
+}
+
+#[test]
+fn parser_reset_stats_mid_stream_should_keep_the_staged_line_parsing_whole() {
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"a 1\ncou"), &mut families);
+    assert!(parser.is_waiting());
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+    // The staged line is stream state, not stats: it completes and the
+    // completed line counts into the post-reset tally alone.
+    merge_into(parser.parse_text(b"nt 5\n"), &mut families);
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 1);
+    assert_eq!(stats.metrics_total, 1);
+    assert_eq!(families.len(), 2);
+    assert_eq!(families[1].name, "count");
+    assert_eq!(families[1].metrics.len(), 1);
+}
+
+#[test]
+fn parser_proto_reset_stats_mid_stream_should_keep_the_staged_message_parsing_whole() {
+    let input = proto_stream(&[("a", 1.0), ("b", 2.0)]);
+    let cut = input.len() - 4;
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_view_into(parser.parse_proto(&input[..cut]), &mut families);
+    assert_eq!(families.len(), 1);
+    assert!(parser.is_waiting());
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+    merge_view_into(parser.parse_proto(&input[cut..]), &mut families);
+    assert_eq!(families.len(), 2);
+    let stats = parser.stats();
+    assert_eq!(
+        stats.metrics_total, 1,
+        "the completed staged message counts post-reset alone"
+    );
+    assert_eq!(stats.last_error, None);
+}
+
+#[test]
+fn parser_reset_stats_mid_stream_should_drop_last_error() {
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"not_a_float\n"), &mut families);
+    assert_ne!(parser.stats().last_error, None);
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+    // The remembered error is stats: it must not resurrect with the next
+    // snapshot, and a clean line keeps the tally clean.
+    merge_into(parser.parse_text(b"c 3\n"), &mut families);
+    let stats = parser.stats();
+    assert_eq!(stats.last_error, None);
+    assert_eq!(stats.lines_total, 1);
+    assert_eq!(stats.metrics_total, 1);
+}
+
+#[test]
+fn parser_reset_stats_after_reset_should_restart_counting_for_a_fresh_stream() {
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_into(parser.parse_text(b"a 1\nb 2\n"), &mut families);
+    assert_eq!(parser.reset(), Ok(()));
+    assert_ne!(parser.stats(), &Stats::default());
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+    // A fresh stream counts from zero again.
+    merge_into(parser.parse_text(b"c 3\n"), &mut families);
+    let stats = parser.stats();
+    assert_eq!(stats.lines_total, 1);
+    assert_eq!(stats.metrics_total, 1);
+    assert_eq!(stats.last_error, None);
+}
+
 // =============================== protobuf ==================================
 
 /// One delimited counter-family message hand-encoded on the wire: family
