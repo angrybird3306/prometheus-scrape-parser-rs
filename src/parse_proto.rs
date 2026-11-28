@@ -103,6 +103,12 @@ impl ProtoBufParser {
         &self.stats
     }
 
+    /// Clears the accumulated stats, keeping the staged partial message
+    /// and the message numbering: counting restarts from the clear.
+    pub fn reset_stats(&mut self) {
+        self.stats = Stats::default();
+    }
+
     /// Records one dropped message whose name never became known: a
     /// wire-level failure skips the whole family message.
     fn record_message_error(&mut self, got: &str) {

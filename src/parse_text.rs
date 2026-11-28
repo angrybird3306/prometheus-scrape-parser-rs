@@ -88,6 +88,12 @@ impl StageArea {
         self.line_no = 0;
         self.stopped = false;
     }
+
+    /// Clears the running tally, keeping the staged line and the line
+    /// numbering: counting restarts from the clear.
+    pub(crate) fn reset_stats(&mut self) {
+        self.stats = Stats::default();
+    }
 }
 
 /// Parses one borrowed slice; the yielded [`MetricFamily`] borrows the

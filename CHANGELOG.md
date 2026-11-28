@@ -18,6 +18,7 @@ Fixed:
 - fix: fail on truncated final line in lenient mode
 - fix: yield complete family before staging truncated line
 - fix: yield complete family for interleaved histogram & summary
+- fix: reset_stats should clear internal states as well
 
 Added:
 - feat: more accurate error messages

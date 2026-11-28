@@ -1324,8 +1324,10 @@ fn parser_reset_stats_should_keep_the_chained_stream_state() {
         })
     );
     let stats = parser.stats();
-    assert_eq!(stats.lines_total, 2);
-    assert_eq!(stats.metrics_total, 2);
+    // The staged line is stream state: it still folds at reset, counting
+    // into the post-reset tally alone.
+    assert_eq!(stats.lines_total, 1);
+    assert_eq!(stats.metrics_total, 1);
     assert_eq!(stats.discarded_families, 1);
     assert!(!parser.is_waiting());
 }

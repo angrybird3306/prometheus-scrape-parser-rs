@@ -151,6 +151,10 @@ impl<M: Mode> Parser<M> {
     /// Clears the stats.
     pub fn reset_stats(&mut self) {
         self.stats = Stats::default();
+        if let Some(stage) = &mut self.stage {
+            stage.reset_stats();
+        }
+        self.proto_parser.reset_stats();
     }
 
     /// Read current stats.
