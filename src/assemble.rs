@@ -14,7 +14,8 @@
 // limitations under the License.
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::error::ErrorKind;
 use crate::lexer::{SampleLine, Token, parse_float_token};
@@ -281,7 +282,7 @@ struct KnownOwnedMeta {
 /// between instances as a whole; only the entries each instance added
 /// convert (see [`Assembler::release_memory`]).
 #[derive(Default)]
-pub struct KnownMemory(HashMap<String, KnownOwnedMeta>);
+pub struct KnownMemory(FxHashMap<String, KnownOwnedMeta>);
 
 impl KnownMemory {
     pub(crate) fn clear(&mut self) {
@@ -298,24 +299,24 @@ fn into_owned_static(text: &str) -> Cow<'static, str> {
 #[derive(Default)]
 pub(crate) struct Assembler<'a> {
     pending_metric_families: Vec<PendingMetricFamily<'a>>,
-    index: HashMap<Cow<'a, str>, usize>,
+    index: FxHashMap<Cow<'a, str>, usize>,
     /// Metadata shadow keyed by resolved family name: the borrowed layer
     /// holds this instance's entries, [`KnownMemory`] the ones that
     /// survived earlier instances.
-    known: HashMap<Cow<'a, str>, KnownMeta<'a>>,
+    known: FxHashMap<Cow<'a, str>, KnownMeta<'a>>,
     known_owned: KnownMemory,
     /// Every resolved family name ever created, yielded families included:
     /// they keep shadowing the metadata memory's type for suffix
     /// resolution, exactly as a whole-input family map would.
-    created: HashSet<Cow<'a, str>>,
-    created_owned: HashSet<String>,
+    created: FxHashSet<Cow<'a, str>>,
+    created_owned: FxHashSet<String>,
     /// Family names whose type is assigned stream-wide — by a TYPE line or
     /// a sample's implicit `Untyped` default (first wins) — so a TYPE line
     /// landing after the family's samples stays as ineffective as the
     /// whole-input fold's, even in a later instance where the slot is a
     /// fresh re-seed.
-    typed: HashSet<Cow<'a, str>>,
-    typed_owned: HashSet<String>,
+    typed: FxHashSet<Cow<'a, str>>,
+    typed_owned: FxHashSet<String>,
     /// Indices of the families surviving pruning, in creation order; filled
     /// by [`Assembler::flush_ready`], consumed by [`Assembler::take_next`].
     ready_indices: Vec<u32>,
@@ -838,7 +839,7 @@ impl<'a> Assembler<'a> {
     /// entries this instance added convert to owned — the only per-boundary
     /// cost — and the owned layers move out as a whole, so transfers stay
     /// linear in what each instance adds.
-    pub(crate) fn release_memory(&mut self) -> (KnownMemory, HashSet<String>, HashSet<String>) {
+    pub(crate) fn release_memory(&mut self) -> (KnownMemory, FxHashSet<String>, FxHashSet<String>) {
         for (key, meta) in self.known.drain() {
             let KnownMeta { help, metric_type } = meta;
             let entry = self.known_owned.0.entry(key.into_owned()).or_default();
@@ -866,8 +867,8 @@ impl<'a> Assembler<'a> {
     pub(crate) fn restore_owned_memory(
         &mut self,
         known: KnownMemory,
-        created: HashSet<String>,
-        typed: HashSet<String>,
+        created: FxHashSet<String>,
+        typed: FxHashSet<String>,
     ) {
         self.known_owned = known;
         self.created_owned = created;

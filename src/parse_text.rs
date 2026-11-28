@@ -17,7 +17,7 @@
 //! zero-copy over caller-held slices, chaining staged state across chunk
 //! boundaries through [`StageArea`]; see the README.
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::Stats;
 use crate::assemble::{Assembler, KnownMemory};
@@ -60,8 +60,8 @@ pub struct StageArea {
     line: Vec<u8>,
     carried: Vec<MetricFamily<'static>>,
     known: KnownMemory,
-    created: HashSet<String>,
-    typed: HashSet<String>,
+    created: FxHashSet<String>,
+    typed: FxHashSet<String>,
     stats: Stats,
     line_no: u64,
     stopped: bool,

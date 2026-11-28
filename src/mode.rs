@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::assemble::resolve_family_name;
 use crate::error::{Disposition, Error, ErrorKind};
@@ -119,7 +119,7 @@ struct FamilyState {
 #[derive(Debug, Clone)]
 pub struct StrictMode {
     scheme: Scheme,
-    families: HashMap<String, FamilyState>,
+    families: FxHashMap<String, FamilyState>,
 }
 
 impl Default for StrictMode {
@@ -140,7 +140,7 @@ impl StrictMode {
     pub fn with_scheme(scheme: Scheme) -> Self {
         StrictMode {
             scheme,
-            families: HashMap::new(),
+            families: FxHashMap::default(),
         }
     }
 }
