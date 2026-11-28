@@ -25,11 +25,11 @@ mod lexer;
 mod mode;
 mod model;
 mod parse_proto;
-mod view;
 mod parse_text;
 mod parser;
 pub mod proto;
 mod search;
+mod view;
 
 pub use crate::error::{Disposition, Error, ErrorKind};
 pub use crate::lexer::{LineView, SampleLine, Token};
@@ -38,10 +38,12 @@ pub use crate::model::{
     Bucket, HistogramValue, IntOrFloat, Label, Metric, MetricFamily, MetricType, MetricValue,
     Quantile, SummaryValue,
 };
-pub use crate::view::{BucketsRef, HistogramValueRef, MetricValueRef, QuantilesRef, SummaryValueRef};
 pub use crate::parse_proto::{ProtoBufParser, ProtoFamily, ProtoFamilyView, ProtoMetricView};
 pub use crate::parse_text::{StageArea, TextParser};
 pub use crate::parser::Parser;
+pub use crate::view::{
+    BucketsRef, HistogramValueRef, MetricValueRef, QuantilesRef, SummaryValueRef,
+};
 
 /// Counters describing what the parser saw and dropped. Error information for
 /// skipped input lives here because no `Mode` yields `Err` items.

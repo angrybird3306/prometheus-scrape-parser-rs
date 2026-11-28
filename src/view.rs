@@ -115,10 +115,7 @@ impl Iterator for BucketsRef<'_> {
                 *slice = rest;
                 Some(Bucket {
                     upper_bound: first.upper_bound,
-                    cumulative_count: count(
-                        first.cumulative_count,
-                        first.cumulative_count_float,
-                    ),
+                    cumulative_count: count(first.cumulative_count, first.cumulative_count_float),
                 })
             }
         }
@@ -143,13 +140,11 @@ impl<'a> From<&'a MetricValue> for MetricValueRef<'a> {
                 sample_sum: summary.sample_sum,
                 quantiles: QuantilesRef::Slice(&summary.quantiles),
             }),
-            MetricValue::Histogram(histogram) => {
-                MetricValueRef::Histogram(HistogramValueRef {
-                    sample_count: histogram.sample_count,
-                    sample_sum: histogram.sample_sum,
-                    buckets: BucketsRef::Slice(&histogram.buckets),
-                })
-            }
+            MetricValue::Histogram(histogram) => MetricValueRef::Histogram(HistogramValueRef {
+                sample_count: histogram.sample_count,
+                sample_sum: histogram.sample_sum,
+                buckets: BucketsRef::Slice(&histogram.buckets),
+            }),
         }
     }
 }
@@ -165,13 +160,11 @@ impl MetricValueRef<'_> {
                 sample_sum: summary.sample_sum,
                 quantiles: summary.quantiles.collect(),
             }),
-            MetricValueRef::Histogram(histogram) => {
-                MetricValue::Histogram(HistogramValue {
-                    sample_count: histogram.sample_count,
-                    sample_sum: histogram.sample_sum,
-                    buckets: histogram.buckets.collect(),
-                })
-            }
+            MetricValueRef::Histogram(histogram) => MetricValue::Histogram(HistogramValue {
+                sample_count: histogram.sample_count,
+                sample_sum: histogram.sample_sum,
+                buckets: histogram.buckets.collect(),
+            }),
         }
     }
 }

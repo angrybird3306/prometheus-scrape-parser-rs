@@ -24,12 +24,8 @@ use buffa::MessageView;
 
 use crate::Stats;
 use crate::error::{Error, ErrorKind};
-use crate::model::{
-    IntOrFloat, Label, Metric, MetricFamily, MetricType,
-};
-use crate::view::{
-    BucketsRef, HistogramValueRef, MetricValueRef, QuantilesRef, SummaryValueRef,
-};
+use crate::model::{IntOrFloat, Label, Metric, MetricFamily, MetricType};
+use crate::view::{BucketsRef, HistogramValueRef, MetricValueRef, QuantilesRef, SummaryValueRef};
 use crate::{LabelView, MetricFamilyView, MetricView};
 
 pub struct ProtoBufParser {
@@ -703,13 +699,18 @@ fn metric_value_ref_of<'a, 'm>(
     proto_type: ProtoType,
 ) -> Option<MetricValueRef<'m>> {
     match proto_type {
-        ProtoType::COUNTER => {
-            metric.counter.as_option().map(|v| MetricValueRef::Sample(v.value))
-        }
-        ProtoType::GAUGE => metric.gauge.as_option().map(|v| MetricValueRef::Sample(v.value)),
-        ProtoType::UNTYPED => {
-            metric.untyped.as_option().map(|v| MetricValueRef::Sample(v.value))
-        }
+        ProtoType::COUNTER => metric
+            .counter
+            .as_option()
+            .map(|v| MetricValueRef::Sample(v.value)),
+        ProtoType::GAUGE => metric
+            .gauge
+            .as_option()
+            .map(|v| MetricValueRef::Sample(v.value)),
+        ProtoType::UNTYPED => metric
+            .untyped
+            .as_option()
+            .map(|v| MetricValueRef::Sample(v.value)),
         ProtoType::SUMMARY => metric.summary.as_option().map(|s| {
             MetricValueRef::Summary(SummaryValueRef {
                 sample_count: Some(s.sample_count),

@@ -80,7 +80,7 @@ fn chunk_mask(chunk: &[u8; CHUNK], needle: u8) -> Bitmap {
 /// `n1` or `n2`.
 #[inline]
 fn chunk_mask2(chunk: &[u8; CHUNK], n1: u8, n2: u8) -> Bitmap {
-    let mut bitmap  = 0;
+    let mut bitmap = 0;
     for (i, &b) in chunk.iter().enumerate() {
         bitmap |= (((b == n1) | (b == n2)) as Bitmap) << i;
     }
@@ -95,7 +95,7 @@ fn is_plain_name_byte(b: u8, colon: bool) -> bool {
 /// Bitmap of the positions holding a byte outside the plain name class.
 #[inline]
 fn name_mask(chunk: &[u8; CHUNK], colon: bool) -> Bitmap {
-    let mut bitmap  = 0;
+    let mut bitmap = 0;
     for (i, &b) in chunk.iter().enumerate() {
         bitmap |= ((!is_plain_name_byte(b, colon)) as Bitmap) << i;
     }
