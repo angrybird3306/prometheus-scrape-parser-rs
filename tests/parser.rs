@@ -1673,6 +1673,39 @@ fn parser_proto_reset_stats_should_clear_the_finalized_totals() {
     assert!(!parser.is_waiting());
 }
 
+#[test]
+fn parser_proto_malformed_prefix_should_stop_until_reset() {
+    // The framing desync stops the parser: the next chunk is a fresh
+    // stream only after reset, not a fresh message stream.
+    let good = proto_stream(&[("a", 1.0)]);
+    let mut chunk1 = good.clone();
+    chunk1.extend_from_slice(&[0xFFu8; 10]);
+    let mut parser = Parser::new(LenientMode);
+    let mut families = Vec::new();
+    merge_view_into(parser.parse_proto(&chunk1), &mut families);
+    assert_eq!(families.len(), 1);
+    assert_eq!(
+        parser.stats().last_error.as_ref().unwrap().kind,
+        ErrorKind::InvalidProtoMessage {
+            got: "malformed length prefix".to_owned(),
+        }
+    );
+
+    let second = proto_stream(&[("b", 2.0)]);
+    merge_view_into(parser.parse_proto(&second), &mut families);
+    assert_eq!(
+        families.len(),
+        1,
+        "the stopped parser must not parse the next chunk"
+    );
+    assert_eq!(parser.stats().metrics_total, 1);
+
+    assert_eq!(parser.reset(), Ok(()));
+    merge_view_into(parser.parse_proto(&second), &mut families);
+    assert_eq!(families.len(), 2);
+    assert!(families[1].name() == "b");
+}
+
 // ====================== formats and cut-line resume ========================
 
 #[test]

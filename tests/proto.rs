@@ -300,7 +300,7 @@ fn proto_cross_chunk_message_completes_owned() {
         dto::MetricType::COUNTER,
         vec![counter(Vec::new(), 1.0, 0)],
     )]);
-    let cut = input.len() - 3;
+    let cut = input.len() - 10;
     let mut parser = ProtoBufParser::new();
     let mut families = Vec::new();
     for family in parser.parse(&input[..cut]) {
@@ -678,6 +678,156 @@ fn proto_malformed_length_prefix_reports_error() {
 }
 
 #[test]
+fn proto_malformed_prefix_should_stop_the_stream_until_reset() {
+    // A malformed length prefix desyncs the framing: the rest of the
+    // chunk drops and the parser stops — the next chunk is a fresh
+    // stream only after reset, not a fresh message stream.
+    let good = encode(&[family(
+        "c",
+        "",
+        dto::MetricType::COUNTER,
+        vec![counter(Vec::new(), 1.0, 0)],
+    )]);
+    let mut chunk1 = good.clone();
+    chunk1.extend_from_slice(&[0xFFu8; 10]);
+    let mut parser = ProtoBufParser::new();
+    let mut families = Vec::new();
+    for family in parser.parse(&chunk1) {
+        families.push(family);
+    }
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].name(), "c");
+    assert_eq!(parser.stats().skipped_families, 1);
+    assert_eq!(
+        parser.stats().last_error.as_ref().unwrap().kind,
+        ErrorKind::InvalidProtoMessage {
+            got: "malformed length prefix".to_owned(),
+        }
+    );
+    assert!(!parser.is_waiting());
+
+    // The desynced stream does not resume: the next chunk parses nothing
+    // and the recorded error stays.
+    let second = encode(&[family(
+        "d",
+        "",
+        dto::MetricType::COUNTER,
+        vec![counter(Vec::new(), 2.0, 0)],
+    )]);
+    assert!(parser.parse(&second).next().is_none());
+    assert!(!parser.is_waiting());
+    assert_eq!(parser.stats().skipped_families, 1);
+    assert_eq!(parser.stats().metrics_total, 1);
+    assert_eq!(
+        parser.stats().last_error.as_ref().unwrap().kind,
+        ErrorKind::InvalidProtoMessage {
+            got: "malformed length prefix".to_owned(),
+        }
+    );
+
+    // reset starts a fresh stream.
+    assert_eq!(parser.reset(), None);
+    for family in parser.parse(&second) {
+        families.push(family);
+    }
+    assert_eq!(families.len(), 2);
+    assert_eq!(families[1].name(), "d");
+    assert_eq!(parser.stats().metrics_total, 1);
+    assert_eq!(parser.stats().last_error, None);
+}
+
+#[test]
+fn proto_malformed_staged_prefix_should_stop_the_stream_until_reset() {
+    // The malformed prefix itself assembled across the boundary: the
+    // staged continuation completes it, the stop still follows, and the
+    // valid message behind it must not parse as a fresh message stream.
+    let good = encode(&[family(
+        "c",
+        "",
+        dto::MetricType::COUNTER,
+        vec![counter(Vec::new(), 1.0, 0)],
+    )]);
+    let mut parser = ProtoBufParser::new();
+    assert!(parser.parse(&[0x80u8; 5]).next().is_none());
+    assert!(parser.is_waiting());
+
+    let mut chunk2 = vec![0x80u8; 5];
+    chunk2.extend_from_slice(&good);
+    assert!(parser.parse(&chunk2).next().is_none());
+    assert!(!parser.is_waiting());
+    assert_eq!(parser.stats().skipped_families, 1);
+    assert_eq!(
+        parser.stats().last_error.as_ref().unwrap().kind,
+        ErrorKind::InvalidProtoMessage {
+            got: "malformed length prefix".to_owned(),
+        }
+    );
+    // The rest of the completing chunk was discarded with the malformed
+    // prefix — and a further chunk must not resume the desynced stream
+    // as a fresh message stream either.
+    assert!(parser.parse(&good).next().is_none());
+
+    assert_eq!(parser.reset(), None);
+    let families: Vec<_> = parser.parse(&good).collect();
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].name(), "c");
+}
+
+#[test]
+fn proto_truncated_prefix_should_complete_on_the_second_parse() {
+    // A valid prefix split across the boundary assembles byte by byte:
+    // the first chunk holds only the prefix's first varint byte, the
+    // second completes it and the message whole. The malformed twin of
+    // this shape stops the parser instead.
+    let long = "x".repeat(120);
+    let input = encode(&[family(
+        "c",
+        "",
+        dto::MetricType::COUNTER,
+        vec![counter(vec![label("k", &long)], 1.0, 0)],
+    )]);
+    assert!(
+        input.len() >= 128,
+        "the test needs a two-byte length prefix"
+    );
+    let mut parser = ProtoBufParser::new();
+    assert!(parser.parse(&input[..1]).next().is_none());
+    assert!(parser.is_waiting());
+    assert_eq!(parser.stats(), &Stats::default());
+
+    let families: Vec<_> = parser.parse(&input[1..]).collect();
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].name(), "c");
+    assert!(matches!(families[0], ProtoFamily::Owned(_)));
+    let metrics: Vec<_> = families[0].metrics().collect();
+    assert_eq!(metrics.len(), 1);
+    assert!(!parser.is_waiting());
+    assert_eq!(parser.stats().metrics_total, 1);
+    assert_eq!(parser.stats().last_error, None);
+}
+
+#[test]
+fn proto_stop_should_survive_reset_stats_and_block_until_reset() {
+    // Clearing the stats is not a stream event: the stop is framing
+    // state and keeps blocking until reset.
+    let mut parser = ProtoBufParser::new();
+    assert!(parser.parse(&[0xFFu8; 10]).next().is_none());
+    parser.reset_stats();
+    assert_eq!(parser.stats(), &Stats::default());
+    let good = encode(&[family(
+        "c",
+        "",
+        dto::MetricType::COUNTER,
+        vec![counter(Vec::new(), 1.0, 0)],
+    )]);
+    assert!(parser.parse(&good).next().is_none());
+    assert_eq!(parser.reset(), None);
+    let families: Vec<_> = parser.parse(&good).collect();
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].name(), "c");
+}
+
+#[test]
 fn proto_corrupt_body_skips_message_and_continues() {
     // Field 1 (name) tagged with the fixed64 wire type: a wire-type
     // mismatch the decoder rejects, while the length prefix keeps the
@@ -702,6 +852,31 @@ fn proto_corrupt_body_skips_message_and_continues() {
             got: "wire type mismatch on field 1: expected 2, got 1".to_owned()
         }
     );
+}
+
+#[test]
+fn proto_chunked_corrupt_body_should_keep_the_stream_aligned() {
+    // A decode error is not a framing failure: mid-message cuts and all,
+    // the corrupt message drops and the stream stays aligned for the
+    // next one. Only a malformed length prefix stops the parser.
+    let mut corrupt = vec![9u8, 0, 0, 0, 0, 0, 0, 0, 0];
+    let good = encode(&[family(
+        "c",
+        "",
+        dto::MetricType::COUNTER,
+        vec![counter(Vec::new(), 1.0, 0)],
+    )]);
+    let mut input = vec![(corrupt.len() as u64) as u8];
+    input.append(&mut corrupt);
+    input.extend_from_slice(&good);
+    let (families, stats) = parse_chunks(&assorted_chunks(&input));
+    assert_eq!(families.len(), 1);
+    assert_eq!(families[0].name(), "c");
+    assert_eq!(stats.skipped_families, 1);
+    assert!(matches!(
+        stats.last_error.unwrap().kind,
+        ErrorKind::InvalidProtoMessage { .. }
+    ));
 }
 
 #[test]
