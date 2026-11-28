@@ -69,9 +69,42 @@ fn chunk_mask2(chunk: &[u8; 8], n1: u8, n2: u8) -> u8 {
     bitmap
 }
 
+/// Index of the first byte outside the plain (unquoted) name class
+/// `[a-zA-Z0-9_]` plus `:` when `colon`; a `"` stops it as well.
+#[inline]
+pub fn find_non_name_byte(colon: bool, haystack: &[u8]) -> usize {
+    const CHUNK: usize = 16;
+    let (chunks, rest) = haystack.as_chunks::<CHUNK>();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let mask = name_mask(chunk, colon);
+        if mask != 0 {
+            return i * CHUNK + mask.trailing_zeros() as usize;
+        }
+    }
+    rest.iter()
+        .position(|&b| !is_plain_name_byte(b, colon))
+        .map(|i| chunks.len() * CHUNK + i)
+        .unwrap_or(haystack.len())
+}
+
+#[inline]
+fn is_plain_name_byte(b: u8, colon: bool) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || (colon && b == b':')
+}
+
+/// Bitmap of the positions holding a byte outside the plain name class.
+#[inline]
+fn name_mask(chunk: &[u8; 16], colon: bool) -> u16 {
+    let mut bitmap: u16 = 0;
+    for (i, &b) in chunk.iter().enumerate() {
+        bitmap |= ((!is_plain_name_byte(b, colon)) as u16) << i;
+    }
+    bitmap
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{find_byte, find_byte2};
+    use super::{find_byte, find_byte2, find_non_name_byte};
 
     #[test]
     fn find_byte_hits_at_every_offset_across_chunk_boundaries() {
@@ -133,5 +166,44 @@ mod tests {
         for len in [0, 1, 7, 8, 15, 16, 17, 31, 32, 33] {
             assert_eq!(find_byte2(b' ', b'\t', &vec![b'x'; len]), None, "len {len}");
         }
+    }
+
+    #[test]
+    fn find_non_name_byte_hits_at_every_offset_across_chunk_boundaries() {
+        for len in 0..=33 {
+            let plain = vec![b'x'; len];
+            for offset in 0..len {
+                let mut hit = plain.clone();
+                hit[offset] = b'#';
+                assert_eq!(
+                    find_non_name_byte(true, &hit),
+                    offset,
+                    "len {len} offset {offset}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn find_non_name_byte_treats_colon_by_the_flag() {
+        assert_eq!(find_non_name_byte(true, b"m:"), 2);
+        assert_eq!(find_non_name_byte(false, b"a:"), 1);
+    }
+
+    #[test]
+    fn find_non_name_byte_returns_leftmost_hit() {
+        assert_eq!(find_non_name_byte(true, b"xx#xx#xx"), 2);
+    }
+
+    #[test]
+    fn find_non_name_byte_scans_to_end_when_all_plain() {
+        for len in [0, 1, 15, 16, 17, 31, 32, 33] {
+            assert_eq!(find_non_name_byte(true, &vec![b'x'; len]), len, "len {len}");
+        }
+    }
+
+    #[test]
+    fn find_non_name_byte_hits_at_the_first_byte() {
+        assert_eq!(find_non_name_byte(true, b"#x"), 0);
     }
 }

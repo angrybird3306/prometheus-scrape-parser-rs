@@ -429,6 +429,18 @@ fn text_parse_9_various_escaped_special_characters_in_metric_and_label_names_sho
     assert_scenario_passes(input, want);
 }
 
+// A plain-start name with an inner quote falls out of the unquoted fast
+// path into the quoted-segment loop: the name ends at the closing quote
+// and the rest of the token errors as spurious text (Go behavior).
+#[test]
+fn mixed_quoted_metric_name_ends_at_the_closing_quote() {
+    assert_error_scenario(
+        "ab\"cd\"ef 1\n",
+        "text format parsing error in line 1: expected float as value, got \"ef\"",
+        "",
+    );
+}
+
 // "10: Quoted metric name, not the first element in the label set."
 //
 #[test]

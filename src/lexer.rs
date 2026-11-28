@@ -16,7 +16,7 @@
 use crate::error::ErrorKind;
 use crate::mode::Scheme;
 use crate::model::{Label, MetricType};
-use crate::search::{find_byte, find_byte2};
+use crate::search::{find_byte, find_byte2, find_non_name_byte};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
@@ -223,6 +223,23 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
             });
         }
         let start = self.pos - 1;
+        let context = if metric { "metric name" } else { "label name" };
+        // Fast path: an unquoted run of plain name bytes.
+        if self.line[start] != b'"' {
+            let end = start + find_non_name_byte(metric, &self.line[start..]);
+            if self.line.get(end) != Some(&b'"') {
+                // `cur` is the already-consumed byte at `pos - 1`.
+                self.pos = (end + 1).min(self.line.len());
+                self.cur = self.line.get(end).copied();
+                return match std::str::from_utf8(&self.line[start..end]) {
+                    Ok(s) => Ok(Token {
+                        decoded: self.stage.place(s),
+                        unknown_escape: None,
+                    }),
+                    Err(_) => Err(ErrorKind::InvalidUtf8 { context }),
+                };
+            }
+        }
         let mut quoted = false;
         let mut escaped = false;
         let mut verbatim = true;
