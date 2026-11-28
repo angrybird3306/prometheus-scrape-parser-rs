@@ -35,7 +35,7 @@ pub fn find_byte(needle: u8, haystack: &[u8]) -> Option<usize> {
 /// [`find_byte`].
 #[inline]
 pub fn find_byte2(n1: u8, n2: u8, haystack: &[u8]) -> Option<usize> {
-    const CHUNK: usize = 8;
+    const CHUNK: usize = 16;
     let (chunks, rest) = haystack.as_chunks::<CHUNK>();
     for (i, chunk) in chunks.iter().enumerate() {
         let mask = chunk_mask2(chunk, n1, n2);
@@ -61,10 +61,10 @@ fn chunk_mask(chunk: &[u8; 16], needle: u8) -> u16 {
 /// Hit bitmap for either needle: bit i is set when `chunk[i]` equals
 /// `n1` or `n2`.
 #[inline]
-fn chunk_mask2(chunk: &[u8; 8], n1: u8, n2: u8) -> u8 {
-    let mut bitmap: u8 = 0;
+fn chunk_mask2(chunk: &[u8; 16], n1: u8, n2: u8) -> u16 {
+    let mut bitmap: u16 = 0;
     for (i, &b) in chunk.iter().enumerate() {
-        bitmap |= (((b == n1) | (b == n2)) as u8) << i;
+        bitmap |= (((b == n1) | (b == n2)) as u16) << i;
     }
     bitmap
 }

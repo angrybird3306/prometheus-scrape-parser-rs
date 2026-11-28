@@ -55,6 +55,9 @@ impl<'a, 'l> Stage<'a, 'l> for StageOwned {
 pub struct Token<'a> {
     pub decoded: Cow<'a, str>,
     pub unknown_escape: Option<u8>,
+    /// The unquoted fast path proved every byte a plain name char: the
+    /// name passes every scheme's metric-name check without a re-scan.
+    pub plain: bool,
 }
 
 /// The structural view of one input line, shared by every Mode.
@@ -220,10 +223,10 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
             return Ok(Token {
                 decoded: Cow::Borrowed(""),
                 unknown_escape: None,
+                plain: false,
             });
         }
         let start = self.pos - 1;
-        let context = if metric { "metric name" } else { "label name" };
         // Fast path: an unquoted run of plain name bytes.
         if self.line[start] != b'"' {
             let end = start + find_non_name_byte(metric, &self.line[start..]);
@@ -231,13 +234,16 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
                 // `cur` is the already-consumed byte at `pos - 1`.
                 self.pos = (end + 1).min(self.line.len());
                 self.cur = self.line.get(end).copied();
-                return match std::str::from_utf8(&self.line[start..end]) {
-                    Ok(s) => Ok(Token {
-                        decoded: self.stage.place(s),
-                        unknown_escape: None,
-                    }),
-                    Err(_) => Err(ErrorKind::InvalidUtf8 { context }),
-                };
+                let bytes = &self.line[start..end];
+                // The scan proved every byte ASCII, so the slice is valid
+                // UTF-8 and needs no checked conversion.
+                debug_assert!(std::str::from_utf8(bytes).is_ok());
+                let s = unsafe { std::str::from_utf8_unchecked(bytes) };
+                return Ok(Token {
+                    decoded: self.stage.place(s),
+                    unknown_escape: None,
+                    plain: true,
+                });
             }
         }
         let mut quoted = false;
@@ -376,6 +382,7 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
         Ok(Token {
             decoded,
             unknown_escape: unknown,
+            plain: false,
         })
     }
 
@@ -487,6 +494,7 @@ impl<'a, 'l, S: Stage<'a, 'l>> Lexer<'a, 'l, S> {
         Ok(Token {
             decoded,
             unknown_escape: unknown,
+            plain: false,
         })
     }
 }
@@ -646,6 +654,7 @@ fn lex_comment<'a, 'l, S: Stage<'a, 'l>>(
         let text = Token {
             decoded,
             unknown_escape,
+            plain: false,
         };
         check_escape(&text, scheme).map_err(LexError::new)?;
         Ok(LineView::Help { name, text })
@@ -682,7 +691,11 @@ fn lex_sample<'a, 'l, S: Stage<'a, 'l>>(
             return Err(LexError::new(ErrorKind::InvalidMetricName));
         }
         check_escape(&tok, scheme).map_err(LexError::new)?;
-        check_metric_name_scheme(&tok.decoded, scheme).map_err(LexError::new)?;
+        // A plain token's character class was proven by the name scan; the
+        // scheme check would re-verify the same bytes.
+        if !tok.plain {
+            check_metric_name_scheme(&tok.decoded, scheme).map_err(LexError::new)?;
+        }
         name = Some(tok);
         lx.skip_blanks_if_current_blank();
     }
