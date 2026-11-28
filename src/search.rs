@@ -15,10 +15,12 @@
 
 //! Byte-search helper functions.
 
+const CHUNK: usize = 16;
+type Bitmap = u16;
+
 /// Index of the first `needle` byte, scanning full chunks at a time.
 #[inline]
 pub fn find_byte(needle: u8, haystack: &[u8]) -> Option<usize> {
-    const CHUNK: usize = 16;
     let (chunks, rest) = haystack.as_chunks::<CHUNK>();
     for (i, chunk) in chunks.iter().enumerate() {
         let mask = chunk_mask(chunk, needle);
@@ -35,7 +37,6 @@ pub fn find_byte(needle: u8, haystack: &[u8]) -> Option<usize> {
 /// [`find_byte`].
 #[inline]
 pub fn find_byte2(n1: u8, n2: u8, haystack: &[u8]) -> Option<usize> {
-    const CHUNK: usize = 16;
     let (chunks, rest) = haystack.as_chunks::<CHUNK>();
     for (i, chunk) in chunks.iter().enumerate() {
         let mask = chunk_mask2(chunk, n1, n2);
@@ -48,32 +49,10 @@ pub fn find_byte2(n1: u8, n2: u8, haystack: &[u8]) -> Option<usize> {
         .map(|i| chunks.len() * CHUNK + i)
 }
 
-/// Hit bitmap for one chunk: bit i is set when `chunk[i] == needle`.
-#[inline]
-fn chunk_mask(chunk: &[u8; 16], needle: u8) -> u16 {
-    let mut bitmap: u16 = 0;
-    for (i, &b) in chunk.iter().enumerate() {
-        bitmap |= ((b == needle) as u16) << i;
-    }
-    bitmap
-}
-
-/// Hit bitmap for either needle: bit i is set when `chunk[i]` equals
-/// `n1` or `n2`.
-#[inline]
-fn chunk_mask2(chunk: &[u8; 16], n1: u8, n2: u8) -> u16 {
-    let mut bitmap: u16 = 0;
-    for (i, &b) in chunk.iter().enumerate() {
-        bitmap |= (((b == n1) | (b == n2)) as u16) << i;
-    }
-    bitmap
-}
-
 /// Index of the first byte outside the plain (unquoted) name class
 /// `[a-zA-Z0-9_]` plus `:` when `colon`; a `"` stops it as well.
 #[inline]
 pub fn find_non_name_byte(colon: bool, haystack: &[u8]) -> usize {
-    const CHUNK: usize = 16;
     let (chunks, rest) = haystack.as_chunks::<CHUNK>();
     for (i, chunk) in chunks.iter().enumerate() {
         let mask = name_mask(chunk, colon);
@@ -87,6 +66,27 @@ pub fn find_non_name_byte(colon: bool, haystack: &[u8]) -> usize {
         .unwrap_or(haystack.len())
 }
 
+/// Hit bitmap for one chunk: bit i is set when `chunk[i] == needle`.
+#[inline]
+fn chunk_mask(chunk: &[u8; CHUNK], needle: u8) -> Bitmap {
+    let mut bitmap = 0;
+    for (i, &b) in chunk.iter().enumerate() {
+        bitmap |= ((b == needle) as Bitmap) << i;
+    }
+    bitmap
+}
+
+/// Hit bitmap for either needle: bit i is set when `chunk[i]` equals
+/// `n1` or `n2`.
+#[inline]
+fn chunk_mask2(chunk: &[u8; CHUNK], n1: u8, n2: u8) -> Bitmap {
+    let mut bitmap  = 0;
+    for (i, &b) in chunk.iter().enumerate() {
+        bitmap |= (((b == n1) | (b == n2)) as Bitmap) << i;
+    }
+    bitmap
+}
+
 #[inline]
 fn is_plain_name_byte(b: u8, colon: bool) -> bool {
     b.is_ascii_alphanumeric() || b == b'_' || (colon && b == b':')
@@ -94,10 +94,10 @@ fn is_plain_name_byte(b: u8, colon: bool) -> bool {
 
 /// Bitmap of the positions holding a byte outside the plain name class.
 #[inline]
-fn name_mask(chunk: &[u8; 16], colon: bool) -> u16 {
-    let mut bitmap: u16 = 0;
+fn name_mask(chunk: &[u8; CHUNK], colon: bool) -> Bitmap {
+    let mut bitmap  = 0;
     for (i, &b) in chunk.iter().enumerate() {
-        bitmap |= ((!is_plain_name_byte(b, colon)) as u16) << i;
+        bitmap |= ((!is_plain_name_byte(b, colon)) as Bitmap) << i;
     }
     bitmap
 }
