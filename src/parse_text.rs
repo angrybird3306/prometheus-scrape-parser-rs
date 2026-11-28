@@ -333,11 +333,9 @@ impl<'a, M: Mode> TextParser<'a, M> {
     }
 
     /// Ends the instance: an aggregation family the input may still extend
-    /// carries over as owned text. A staged cut line names its family by
-    /// the probe, falling back to the last folded family (a blank or
-    /// interleaved plain line may sit between an aggregation row's lines);
-    /// a clean boundary holds the last folded family only while it still
-    /// gathers a sample group.
+    /// carries over as owned text. The staged cut line names its family by
+    /// the probe, falling back to the last folded family while it still
+    /// gathers a sample group — a complete family yields.
     fn flush_end(&mut self, carry_allowed: bool) {
         if carry_allowed {
             let scheme = self.mode.name_scheme();
@@ -348,7 +346,11 @@ impl<'a, M: Mode> TextParser<'a, M> {
             } else {
                 pending_fold_family(&self.staging.line, false, scheme, &self.assembler)
                     .and_then(|name| self.assembler.aggregation_slot_of(&name))
-                    .or_else(|| self.assembler.last_slot())
+                    .or_else(|| {
+                        self.assembler
+                            .last_slot()
+                            .filter(|&slot| self.assembler.gathers_sample_group(slot))
+                    })
             };
             if let Some(slot) = slot {
                 self.staging.carried = self.assembler.take_aggregation_slot_owned(slot);

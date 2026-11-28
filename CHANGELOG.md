@@ -16,6 +16,7 @@ Fixed:
 - fix: skip histogram & summary lines with illegal le/quantile label
 - fix: skip illegal lines in lenient mode
 - fix: fail on truncated final line in lenient mode
+- fix: yield complete family before staging truncated line
 
 Added:
 - feat: more accurate error messages
