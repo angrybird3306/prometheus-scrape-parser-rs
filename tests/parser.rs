@@ -1929,3 +1929,119 @@ fn summary_quantile_cut_should_resume() {
         );
     }
 }
+
+// ==================== labeled aggregation row merging =======================
+//
+// The aggregation row identity is the label SET: probes whose regular
+// labels arrive in a different order merge into the existing row, probes
+// with a different set create their own.
+
+#[test]
+fn labeled_histogram_rows_merge_across_label_orders() {
+    let input: &[u8] = b"# TYPE h histogram\n\
+         h_bucket{le=\"+Inf\",a=\"1\",b=\"2\"} 1\n\
+         h_count{a=\"1\",b=\"2\"} 1\n\
+         h_sum{a=\"1\",b=\"2\"} 1\n\
+         h_bucket{b=\"2\",a=\"1\",le=\"+Inf\"} 2\n\
+         h_count{b=\"2\",a=\"1\"} 2\n\
+         h_sum{b=\"2\",a=\"1\"} 3\n";
+    for (mode_name, mode) in modes() {
+        let (families, _) = parse(input, mode);
+        assert_eq!(families.len(), 1, "[{mode_name}]");
+        assert_eq!(
+            families[0].metrics.len(),
+            1,
+            "[{mode_name}]: the permuted probes must merge into the existing row"
+        );
+        assert_eq!(
+            families[0].metrics[0]
+                .labels
+                .iter()
+                .map(|l| (l.name.as_ref(), l.value.as_ref()))
+                .collect::<Vec<_>>(),
+            [("a", "1"), ("b", "2")],
+            "[{mode_name}]: the row keeps the first line's label order"
+        );
+        let MetricValue::Histogram(histogram) = &families[0].metrics[0].value else {
+            panic!("[{mode_name}] the row must hold the histogram");
+        };
+        assert_eq!(
+            histogram.sample_count,
+            Some(IntOrFloat::Int(2)),
+            "[{mode_name}]"
+        );
+        assert_eq!(histogram.sample_sum, Some(3.0), "[{mode_name}]");
+        assert_eq!(
+            histogram
+                .buckets
+                .iter()
+                .map(|b| (b.upper_bound, b.cumulative_count))
+                .collect::<Vec<_>>(),
+            // A repeated upper bound appends a bucket entry, like Go's
+            // `append` in text_parse.go; row identity is the label set only.
+            [
+                (f64::INFINITY, IntOrFloat::Int(1)),
+                (f64::INFINITY, IntOrFloat::Int(2))
+            ],
+            "[{mode_name}]"
+        );
+    }
+}
+
+#[test]
+fn labeled_summary_rows_merge_across_label_orders() {
+    let input: &[u8] = b"# TYPE s summary\n\
+         s_count{a=\"1\",b=\"2\"} 1\n\
+         s_count{b=\"2\",a=\"1\"} 2\n\
+         s_sum{a=\"1\",b=\"2\"} 1\n\
+         s_sum{b=\"2\",a=\"1\"} 3\n";
+    let (families, _) = parse(input, TestMode::StrictLegacy);
+    assert_eq!(families.len(), 1);
+    assert_eq!(
+        families[0].metrics.len(),
+        1,
+        "the permuted probes must merge into the existing row"
+    );
+    let MetricValue::Summary(summary) = &families[0].metrics[0].value else {
+        panic!("the row must hold the summary");
+    };
+    assert_eq!(summary.sample_count, Some(2));
+    assert_eq!(summary.sample_sum, Some(3.0));
+}
+
+#[test]
+fn labeled_histogram_rows_stay_apart_by_label_sets() {
+    let input: &[u8] = b"# TYPE h histogram\n\
+         h_bucket{le=\"+Inf\",a=\"1\"} 1\n\
+         h_count{a=\"1\"} 1\n\
+         h_bucket{le=\"+Inf\",a=\"2\"} 2\n\
+         h_count{a=\"2\"} 2\n";
+    let (families, _) = parse(input, TestMode::StrictLegacy);
+    assert_eq!(families.len(), 1);
+    assert_eq!(
+        families[0].metrics.len(),
+        2,
+        "distinct label sets are distinct rows"
+    );
+    for (row, (a, count)) in families[0].metrics.iter().zip([("1", 1), ("2", 2)]) {
+        assert_eq!(
+            row.labels
+                .iter()
+                .map(|l| (l.name.as_ref(), l.value.as_ref()))
+                .collect::<Vec<_>>(),
+            [("a", a)]
+        );
+        let MetricValue::Histogram(histogram) = &row.value else {
+            panic!("the row must hold the histogram");
+        };
+        assert_eq!(histogram.sample_count, Some(IntOrFloat::Int(count)));
+        assert_eq!(
+            histogram
+                .buckets
+                .iter()
+                .map(|b| (b.upper_bound, b.cumulative_count))
+                .collect::<Vec<_>>(),
+            [(f64::INFINITY, IntOrFloat::Int(count))]
+        );
+    }
+}
