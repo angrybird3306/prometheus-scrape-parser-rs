@@ -106,7 +106,7 @@ impl Scheme {
 
 #[derive(Debug, Default, Clone, Copy)]
 struct FamilyState {
-    help_info_capcured: bool,
+    help_info_captured: bool,
     metric_type: Option<MetricType>,
     sample: bool,
 }
@@ -161,12 +161,12 @@ impl Mode for StrictMode {
                     self.families
                         .insert(target.to_string(), FamilyState::default());
                 }
-                if self.families[target].help_info_capcured {
+                if self.families[target].help_info_captured {
                     return Err(at(ErrorKind::SecondHelpLine {
                         name: target.to_string(),
                     }));
                 }
-                self.families.get_mut(target).unwrap().help_info_capcured = true;
+                self.families.get_mut(target).unwrap().help_info_captured = true;
                 Ok(())
             }
             LineView::Type { name, metric_type } => {
